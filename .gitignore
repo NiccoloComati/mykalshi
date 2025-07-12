@@ -1,3 +1,4 @@
 # Ignore environment variable and key files
 .env
 *.key
+*.csv
