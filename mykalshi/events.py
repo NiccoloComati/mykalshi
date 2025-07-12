@@ -33,6 +33,34 @@ def get_events(limit=100, cursor=None, status=None, series_ticker=None, with_nes
     }
     return kalshi_get("/events", {k: v for k, v in params.items() if v is not None})
 
+
+def get_all_events(status=None, series_ticker=None, with_nested_markets=False, batch_size=200):
+    """
+    Fetch every event by paging through /events.
+
+    Filters (all optional):
+      • status: unopened, open, closed, settled  
+      • series_ticker: only those in a given series  
+      • with_nested_markets: include nested market objects  
+
+    Internally pages with `limit=batch_size` until no cursor remains.
+    """
+    all_events = []
+    cursor = None
+    while True:
+        resp = get_events(
+            cursor=cursor,
+            status=status,
+            series_ticker=series_ticker,
+            with_nested_markets=with_nested_markets,
+            limit=batch_size
+        )
+        all_events.extend(resp["events"])
+        cursor = resp.get("cursor")
+        if not cursor:
+            break
+    return all_events
+
 def get_series_list(category=None, include_product_metadata=False):
     """
     Get a list of series optionally filtered by category.
@@ -55,6 +83,32 @@ def get_series(series_ticker):
         series_ticker (str): The series identifier
     """
     return kalshi_get(f"/series/{series_ticker}")
+
+def get_all_series(category=None, include_product_metadata=False, batch_size=100):
+    """
+    Fetch every series by paging through /series/.
+
+    Filters (all optional):
+      • category: only series in this category  
+      • include_product_metadata: include extra metadata  
+
+    Internally pages with `limit=batch_size` until no cursor remains.
+    """
+    all_series = []
+    cursor = None
+    while True:
+        params = {
+            "category": category,
+            "include_product_metadata": include_product_metadata,
+            "limit": batch_size,
+            "cursor": cursor
+        }
+        resp = kalshi_get("/series/", {k: v for k, v in params.items() if v is not None})
+        all_series.extend(resp["series"])
+        cursor = resp.get("cursor")
+        if not cursor:
+            break
+    return all_series
 
 def get_event_collection(collection_ticker):
     """

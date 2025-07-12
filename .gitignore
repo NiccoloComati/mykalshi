@@ -2,3 +2,5 @@
 .env
 *.key
 *.csv
+*.json
+*jsonl
