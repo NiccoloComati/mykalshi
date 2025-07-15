@@ -226,11 +226,24 @@ if __name__ == "__main__":
     print("\n✅  All test runs complete.")
 
 
-    # ─────────────── ACTUAL RECORDING ─────────────────
+#     # ─────────────── ACTUAL RECORDING ─────────────────
     
+#     # ──────────  PARAMETERS  ──────────
+#     # your actual production settings:
+#     INTERVAL_SECS  =   10.0           # seconds between snapshots
+#     MAX_WORKERS    =   min(32, len(tickers))
+#     CALLS_PER_SEC  =   10             # must match your API tier
+#     BUCKET         =   "mykalshi-lob-logs"
+#     S3_PREFIX      =   "daily/"
+#     # ───────────────────────────────────
+
 # if __name__ == "__main__":
 #     import time
-#     from datetime import datetime, date, time as dtime, timezone, timedelta
+#     from datetime import datetime, timezone, timedelta
+#     import boto3
+#     from botocore.exceptions import ClientError
+
+#     s3 = boto3.client("s3")
 
 #     # ← your list of tickers
 #     tickers = [
@@ -239,7 +252,6 @@ if __name__ == "__main__":
 #         'KXRTSMURFS-30','KXRTSMURFS-90','KXRTSMURFS-75','KXRTSMURFS-60',
 #         'KXRTSMURFS-45'
 #     ]
-
     
 #     while True:
 #         # 1) compute seconds until close
@@ -247,39 +259,34 @@ if __name__ == "__main__":
 #         now = datetime.now(timezone.utc)
 #         date_str = now.strftime("%Y%m%d")
 
-#         # 2) pick a date-stamped file for this run
+#         # 2) name today’s file
 #         output_file = f"lob_stream_{date_str}.jsonl"
-#         print(f"\n→ Starting recorder:  will write to {output_file}")
-#         print(f"  (will run for {secs_to_close/60:.1f} minutes until close)\n")
+#         print(f"▶ Recording until close (~{secs_to_close/3600:.2f}h), writing → {output_file}")
 
-#         # 3) instantiate & run
+#         # 3) run the recorder exactly once
 #         rec = MarketLOBRecorder(
 #             tickers=tickers,
-#             interval_secs=10.0,                # or whatever you like
-#             max_workers=min(32, len(tickers)),
-#             calls_per_sec=30,
+#             interval_secs=INTERVAL_SECS,
+#             max_workers=MAX_WORKERS,
+#             calls_per_sec=CALLS_PER_SEC,
 #             output_path=output_file
 #         )
 #         rec.start(duration_secs=secs_to_close)
 
-#         # 4) upload to S3
-#         s3     = boto3.client("s3")
-#         bucket = "mykalshi-lob-logs"
-#         key    = f"logs/{output_file}"
-
+#         # 4) upload to S3 & delete locally
+#         key = f"{S3_PREFIX}{output_file}"
 #         try:
-#             print(f"Uploading {output_file} → s3://{bucket}/{key} …")
-#             s3.upload_file(output_file, bucket, key)
-#             print("  → upload succeeded, deleting local file")
+#             print(f"Uploading {output_file} → s3://{BUCKET}/{key}")
+#             s3.upload_file(output_file, BUCKET, key)
+#             print("  ✔ upload succeeded, deleting local file")
 #             os.remove(output_file)
 #         except ClientError as e:
 #             print("  ! upload failed:", e)
 
-#         # 5) figure out how long until next UTC-midnight
+#         # 5) sleep until next UTC-midnight, then exit (systemd will restart it)
 #         now = datetime.now(timezone.utc)
 #         tomorrow = (now + timedelta(days=1)).date()
-#         next_run = datetime.combine(tomorrow, dtime(0,0), tzinfo=timezone.utc)
+#         next_run = datetime.combine(tomorrow, time(0,0), tzinfo=timezone.utc)
 #         sleep_secs = (next_run - now).total_seconds()
-#         h = sleep_secs / 3600
-#         print(f"\n→ Finished today’s run.  Sleeping ~{h:.2f}h until next run at UTC‐midnight…")
+#         print(f"Sleeping {sleep_secs/3600:.2f}h until tomorrow’s run…")
 #         time.sleep(sleep_secs)
