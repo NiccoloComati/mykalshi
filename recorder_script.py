@@ -10,6 +10,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from requests.exceptions import HTTPError
 import pandas as pd
 from mykalshi import market, exchange
+import boto3
+from botocore.exceptions import ClientError
 
 def get_seconds_until_close():
     now = datetime.now(timezone.utc)  # local time, adjust if your times are in UTC
@@ -162,9 +164,10 @@ class MarketLOBRecorder:
         print("Errors by ticker:", self.error_counts)
 
 
+    # ─────────────── TEST ─────────────────
+    
 if __name__ == "__main__":
-    import time
-    from datetime import datetime, date, time as dtime, timezone, timedelta
+
 
     # ← your list of tickers
     tickers = [
@@ -174,32 +177,108 @@ if __name__ == "__main__":
         'KXRTSMURFS-45'
     ]
 
-    while True:
-        # 1) compute seconds until close
-        secs_to_close = get_seconds_until_close()
-        now = datetime.now(timezone.utc)
-        date_str = now.strftime("%Y%m%d")
+    # ─── TEST PARAMETERS ───────────────────────────────────────
+    RUN_DURATION      = 120    # seconds per run
+    SLEEP_BETWEEN     =  60    # seconds between runs
+    NUM_RUNS          =   2    # total runs (2×120s + 1×60s ≈ 5min)
+    INTERVAL_SECS     =  10    # your fetch interval
+    MAX_WORKERS       = min(32, len(tickers))
+    CALLS_PER_SEC     =  30
+    BUCKET            = "mykalshi-lob-logs"
+    # ────────────────────────────────────────────────────────────
 
-        # 2) pick a date-stamped file for this run
-        output_file = f"lob_stream_{date_str}.jsonl"
-        print(f"\n→ Starting recorder:  will write to {output_file}")
-        print(f"  (will run for {secs_to_close/60:.1f} minutes until close)\n")
+    import boto3
+    from botocore.exceptions import ClientError
 
-        # 3) instantiate & run
+    s3 = boto3.client("s3")
+
+    for i in range(NUM_RUNS):
+        now      = datetime.now(timezone.utc)
+        date_str = now.strftime("%Y%m%d_%H%M%S")
+        output_file = f"lob_stream_test_{i+1}_{date_str}.jsonl"
+
+        print(f"\n--- TEST RUN {i+1}/{NUM_RUNS}: writing to {output_file}")
         rec = MarketLOBRecorder(
             tickers=tickers,
-            interval_secs=10.0,                # or whatever you like
-            max_workers=min(32, len(tickers)),
-            calls_per_sec=30,
+            interval_secs=INTERVAL_SECS,
+            max_workers=MAX_WORKERS,
+            calls_per_sec=CALLS_PER_SEC,
             output_path=output_file
         )
-        rec.start(duration_secs=secs_to_close)
+        rec.start(duration_secs=RUN_DURATION)
 
-        # 4) figure out how long until next UTC-midnight
-        now = datetime.now(timezone.utc)
-        tomorrow = (now + timedelta(days=1)).date()
-        next_run = datetime.combine(tomorrow, dtime(0,0), tzinfo=timezone.utc)
-        sleep_secs = (next_run - now).total_seconds()
-        h = sleep_secs / 3600
-        print(f"\n→ Finished today’s run.  Sleeping ~{h:.2f}h until next run at UTC‐midnight…")
-        time.sleep(sleep_secs)
+        # ─── UPLOAD & CLEANUP ────────────────────────────────
+        key = f"logs/{output_file}"
+        try:
+            print(f"Uploading {output_file} → s3://{BUCKET}/{key}")
+            s3.upload_file(output_file, BUCKET, key)
+            print("  → upload succeeded, deleting local file")
+            os.remove(output_file)
+        except ClientError as e:
+            print("  ! upload failed:", e)
+
+        # ─── SLEEP BEFORE NEXT RUN ─────────────────────────────
+        if i < NUM_RUNS - 1:
+            print(f"Sleeping {SLEEP_BETWEEN}s before next run…")
+            time.sleep(SLEEP_BETWEEN)
+
+    print("\n✅  All test runs complete.")
+
+
+    # ─────────────── ACTUAL RECORDING ─────────────────
+    
+# if __name__ == "__main__":
+#     import time
+#     from datetime import datetime, date, time as dtime, timezone, timedelta
+
+#     # ← your list of tickers
+#     tickers = [
+#         'KXRTSMURFS-0','KXRTSMURFS-5','KXRTSMURFS-10','KXRTSMURFS-15',
+#         'KXRTSMURFS-20','KXRTSMURFS-25','KXRTSMURFS-40','KXRTSMURFS-35',
+#         'KXRTSMURFS-30','KXRTSMURFS-90','KXRTSMURFS-75','KXRTSMURFS-60',
+#         'KXRTSMURFS-45'
+#     ]
+
+    
+#     while True:
+#         # 1) compute seconds until close
+#         secs_to_close = get_seconds_until_close()
+#         now = datetime.now(timezone.utc)
+#         date_str = now.strftime("%Y%m%d")
+
+#         # 2) pick a date-stamped file for this run
+#         output_file = f"lob_stream_{date_str}.jsonl"
+#         print(f"\n→ Starting recorder:  will write to {output_file}")
+#         print(f"  (will run for {secs_to_close/60:.1f} minutes until close)\n")
+
+#         # 3) instantiate & run
+#         rec = MarketLOBRecorder(
+#             tickers=tickers,
+#             interval_secs=10.0,                # or whatever you like
+#             max_workers=min(32, len(tickers)),
+#             calls_per_sec=30,
+#             output_path=output_file
+#         )
+#         rec.start(duration_secs=secs_to_close)
+
+#         # 4) upload to S3
+#         s3     = boto3.client("s3")
+#         bucket = "mykalshi-lob-logs"
+#         key    = f"logs/{output_file}"
+
+#         try:
+#             print(f"Uploading {output_file} → s3://{bucket}/{key} …")
+#             s3.upload_file(output_file, bucket, key)
+#             print("  → upload succeeded, deleting local file")
+#             os.remove(output_file)
+#         except ClientError as e:
+#             print("  ! upload failed:", e)
+
+#         # 5) figure out how long until next UTC-midnight
+#         now = datetime.now(timezone.utc)
+#         tomorrow = (now + timedelta(days=1)).date()
+#         next_run = datetime.combine(tomorrow, dtime(0,0), tzinfo=timezone.utc)
+#         sleep_secs = (next_run - now).total_seconds()
+#         h = sleep_secs / 3600
+#         print(f"\n→ Finished today’s run.  Sleeping ~{h:.2f}h until next run at UTC‐midnight…")
+#         time.sleep(sleep_secs)
