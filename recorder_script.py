@@ -136,23 +136,17 @@ class MarketLOBRecorder:
 
 
 def main():
-    # 1) Load open markets, require volume>0, sort by close_time earliest
-    open_df = pd.json_normalize(
-        market.get_all_markets(status="open", batch_size=1000)
-    )
-    open_df = open_df[open_df["volume"] > 0]
-    open_df = open_df.sort_values(by="close_time", ascending=True)
-    tickers = open_df.head(200)["ticker"].tolist()
+    tickers = ['KXBTCD-25JUL1513-T116249.99', 'KXINXU-25JUL15H1600-T6324.9999']
 
     # 2) Instantiate & run for 3 minutes at 10s intervals
     rec = MarketLOBRecorder(
         tickers=tickers,
-        interval_secs=10.0,
+        interval_secs=1.0,
         max_workers=min(32, len(tickers)),
         calls_per_sec=30,
         output_path="lob_stream.jsonl"
     )
-    rec.start(duration_secs=3 * 60)
+    rec.start(duration_secs=60 * 10)
 
 
 if __name__ == "__main__":
