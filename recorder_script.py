@@ -5,12 +5,39 @@ import json
 import queue
 import random
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from requests.exceptions import HTTPError
-
 import pandas as pd
-from mykalshi import market  # adjust if your package path differs
+from mykalshi import market, exchange
+
+def get_seconds_until_close():
+    now = datetime.now()  # local time, adjust if your times are in UTC
+    day = now.strftime("%A").lower()  # e.g. 'monday'
+
+    schedule = exchange.get_exchange_schedule()
+    standard_hours = schedule['schedule']['standard_hours'][0]
+    today_sessions = standard_hours.get(day, [])
+
+    # Parse sessions and find the latest close_time
+    close_times = []
+    for session in today_sessions:
+        close_str = session["close_time"]
+        close_hour, close_min = map(int, close_str.split(":"))
+        close_dt = datetime.combine(now.date(), time(close_hour, close_min))
+
+        # if close time is after midnight, roll to next day
+        if close_dt <= now:
+            close_dt += timedelta(days=1)
+
+        close_times.append(close_dt)
+
+    if not close_times:
+        raise RuntimeError("No trading hours found for today.")
+
+    latest_close = max(close_times)
+    duration_secs = (latest_close - now).total_seconds()
+    return max(0, duration_secs)
 
 class MarketLOBRecorder:
     def __init__(self,
@@ -136,6 +163,7 @@ class MarketLOBRecorder:
 
 
 def main():
+    
     tickers = ['KXRTSMURFS-0',
  'KXRTSMURFS-5',
  'KXRTSMURFS-10',
@@ -150,6 +178,9 @@ def main():
  'KXRTSMURFS-60',
  'KXRTSMURFS-45']
 
+    duration_secs = get_seconds_until_close()
+    print(f"Recording until close: {duration_secs/60:.2f} minutes from now.")
+
     # 2) Instantiate & run for 3 minutes at 10s intervals
     rec = MarketLOBRecorder(
         tickers=tickers,
@@ -158,7 +189,7 @@ def main():
         calls_per_sec=30,
         output_path="lob_stream.jsonl"
     )
-    rec.start(duration_secs=60 * 5)
+    rec.start(duration_secs=duration_secs)
 
 
 if __name__ == "__main__":
