@@ -5,7 +5,8 @@ import json
 import queue
 import random
 import threading
-from datetime import datetime, timezone, timedelta, time
+from datetime import datetime, timezone, timedelta
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from requests.exceptions import HTTPError
 import pandas as pd
