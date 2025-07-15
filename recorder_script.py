@@ -5,8 +5,9 @@ import json
 import queue
 import random
 import threading
-from datetime import datetime, timezone, timedelta
 import time
+from datetime import datetime, timezone, timedelta
+import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from requests.exceptions import HTTPError
 import pandas as pd
@@ -27,7 +28,7 @@ def get_seconds_until_close():
     for session in today_sessions:
         close_str = session["close_time"]
         close_hour, close_min = map(int, close_str.split(":"))
-        close_dt = datetime.combine(now.date(), time(close_hour, close_min))
+        close_dt = datetime.combine(now.date(), datetime.time(close_hour, close_min))
 
         # if close time is after midnight, roll to next day
         if close_dt <= now:
