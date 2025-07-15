@@ -153,12 +153,12 @@ def main():
     # 2) Instantiate & run for 3 minutes at 10s intervals
     rec = MarketLOBRecorder(
         tickers=tickers,
-        interval_secs=1.0,
+        interval_secs=5.0,
         max_workers=min(32, len(tickers)),
         calls_per_sec=30,
         output_path="lob_stream.jsonl"
     )
-    rec.start(duration_secs=60 * 10)
+    rec.start(duration_secs=60 * 5)
 
 
 if __name__ == "__main__":
