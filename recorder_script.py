@@ -5,7 +5,7 @@ import json
 import queue
 import random
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from requests.exceptions import HTTPError
 
@@ -79,7 +79,7 @@ class MarketLOBRecorder:
                     raise ValueError("Empty orderbook arrays")
 
                 record = {
-                    "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+                    "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
                     "ticker": ticker,
                     "bids": bids,
                     "asks": asks
@@ -105,7 +105,7 @@ class MarketLOBRecorder:
         # retries exhausted
         self.error_counts[ticker] += 1
         return {
-            "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
             "ticker": ticker,
             "bids": {},
             "asks": {},
