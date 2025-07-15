@@ -24,7 +24,11 @@ def get_seconds_until_close():
     close_times = []
     for session in today_sessions:
         close_hour, close_min = map(int, session["close_time"].split(":"))
-        close_dt = datetime.combine(now.date(), dttime(close_hour, close_min))
+        close_dt = datetime.combine(
+            now.date(),
+            dttime(close_hour, close_min),
+            tzinfo=timezone.utc
+        )
         if close_dt <= now:
             close_dt += timedelta(days=1)
         close_times.append(close_dt)
