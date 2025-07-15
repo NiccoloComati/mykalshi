@@ -1,6 +1,6 @@
 # Ignore environment variable and key files
-.env
-*.key
+# .env
+# *.key
 *.csv
 *.json
 *jsonl
