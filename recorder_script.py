@@ -5,14 +5,14 @@ import json
 import queue
 import random
 import threading
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from requests.exceptions import HTTPError
 import pandas as pd
 from mykalshi import market, exchange
 
 def get_seconds_until_close():
-    now = datetime.now()  # local time, adjust if your times are in UTC
+    now = datetime.now(timezone.utc)  # local time, adjust if your times are in UTC
     day = now.strftime("%A").lower()  # e.g. 'monday'
 
     schedule = exchange.get_exchange_schedule()
@@ -162,35 +162,44 @@ class MarketLOBRecorder:
         print("Errors by ticker:", self.error_counts)
 
 
-def main():
-    
-    tickers = ['KXRTSMURFS-0',
- 'KXRTSMURFS-5',
- 'KXRTSMURFS-10',
- 'KXRTSMURFS-15',
- 'KXRTSMURFS-20',
- 'KXRTSMURFS-25',
- 'KXRTSMURFS-40',
- 'KXRTSMURFS-35',
- 'KXRTSMURFS-30',
- 'KXRTSMURFS-90',
- 'KXRTSMURFS-75',
- 'KXRTSMURFS-60',
- 'KXRTSMURFS-45']
-
-    duration_secs = get_seconds_until_close()
-    print(f"Recording until close: {duration_secs/60:.2f} minutes from now.")
-
-    # 2) Instantiate & run for 3 minutes at 10s intervals
-    rec = MarketLOBRecorder(
-        tickers=tickers,
-        interval_secs=5.0,
-        max_workers=min(32, len(tickers)),
-        calls_per_sec=30,
-        output_path="lob_stream.jsonl"
-    )
-    rec.start(duration_secs=duration_secs)
-
-
 if __name__ == "__main__":
-    main()
+    import time
+    from datetime import datetime, date, time as dtime, timezone, timedelta
+
+    # ← your list of tickers
+    tickers = [
+        'KXRTSMURFS-0','KXRTSMURFS-5','KXRTSMURFS-10','KXRTSMURFS-15',
+        'KXRTSMURFS-20','KXRTSMURFS-25','KXRTSMURFS-40','KXRTSMURFS-35',
+        'KXRTSMURFS-30','KXRTSMURFS-90','KXRTSMURFS-75','KXRTSMURFS-60',
+        'KXRTSMURFS-45'
+    ]
+
+    while True:
+        # 1) compute seconds until close
+        secs_to_close = get_seconds_until_close()
+        now = datetime.now(timezone.utc)
+        date_str = now.strftime("%Y%m%d")
+
+        # 2) pick a date-stamped file for this run
+        output_file = f"lob_stream_{date_str}.jsonl"
+        print(f"\n→ Starting recorder:  will write to {output_file}")
+        print(f"  (will run for {secs_to_close/60:.1f} minutes until close)\n")
+
+        # 3) instantiate & run
+        rec = MarketLOBRecorder(
+            tickers=tickers,
+            interval_secs=10.0,                # or whatever you like
+            max_workers=min(32, len(tickers)),
+            calls_per_sec=30,
+            output_path=output_file
+        )
+        rec.start(duration_secs=secs_to_close)
+
+        # 4) figure out how long until next UTC-midnight
+        now = datetime.now(timezone.utc)
+        tomorrow = (now + timedelta(days=1)).date()
+        next_run = datetime.combine(tomorrow, dtime(0,0), tzinfo=timezone.utc)
+        sleep_secs = (next_run - now).total_seconds()
+        h = sleep_secs / 3600
+        print(f"\n→ Finished today’s run.  Sleeping ~{h:.2f}h until next run at UTC‐midnight…")
+        time.sleep(sleep_secs)
