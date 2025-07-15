@@ -136,7 +136,19 @@ class MarketLOBRecorder:
 
 
 def main():
-    tickers = ['KXBTCD-25JUL1513-T116249.99', 'KXINXU-25JUL15H1600-T6324.9999']
+    tickers = ['KXRTSMURFS-0',
+ 'KXRTSMURFS-5',
+ 'KXRTSMURFS-10',
+ 'KXRTSMURFS-15',
+ 'KXRTSMURFS-20',
+ 'KXRTSMURFS-25',
+ 'KXRTSMURFS-40',
+ 'KXRTSMURFS-35',
+ 'KXRTSMURFS-30',
+ 'KXRTSMURFS-90',
+ 'KXRTSMURFS-75',
+ 'KXRTSMURFS-60',
+ 'KXRTSMURFS-45']
 
     # 2) Instantiate & run for 3 minutes at 10s intervals
     rec = MarketLOBRecorder(
