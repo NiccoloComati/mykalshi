@@ -5,7 +5,7 @@ import json
 import queue
 import random
 import threading
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time as dttime
 from datetime import time as dttime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from requests.exceptions import HTTPError
@@ -13,30 +13,40 @@ import pandas as pd
 from mykalshi import market, exchange
 import boto3
 from botocore.exceptions import ClientError
+from zoneinfo import ZoneInfo
 
 def get_seconds_until_close():
-    now = datetime.now(timezone.utc)
-    day = now.strftime("%A").lower()
-    schedule = exchange.get_exchange_schedule()
-    standard_hours = schedule['schedule']['standard_hours'][0]
-    today_sessions = standard_hours.get(day, [])
+    # 1) current instant in UTC
+    now_utc = datetime.now(timezone.utc)
+
+    # 2) what is "now" in New York?
+    exch_tz   = ZoneInfo("America/New_York")
+    now_local = now_utc.astimezone(exch_tz)
+
+    # 3) fetch the schedule; assume it's keyed by weekday names
+    day          = now_local.strftime("%A").lower()
+    sched        = exchange.get_exchange_schedule()["schedule"]["standard_hours"][0]
+    today_times  = sched.get(day, [])
 
     close_times = []
-    for session in today_sessions:
-        close_hour, close_min = map(int, session["close_time"].split(":"))
-        close_dt = datetime.combine(
-            now.date(),
-            dttime(close_hour, close_min),
-            tzinfo=timezone.utc
-        )
-        if close_dt <= now:
-            close_dt += timedelta(days=1)
-        close_times.append(close_dt)
+    for session in today_times:
+        # parse the ET close_time (e.g. "03:00", "15:00")
+        hr, mn = map(int, session["close_time"].split(":"))
+        # build a localized datetime for today at that hour
+        cand = datetime.combine(now_local.date(), dttime(hr, mn), tzinfo=exch_tz)
+
+        # if that time has already passed in local, roll to tomorrow
+        if cand <= now_local:
+            cand += timedelta(days=1)
+
+        # convert back to UTC
+        close_times.append(cand.astimezone(timezone.utc))
 
     if not close_times:
-        raise RuntimeError("No trading hours found for today.")
+        raise RuntimeError("No trading hours found for today in schedule.")
 
-    return max(close_times).timestamp() - now.timestamp()
+    latest_close_utc = max(close_times)
+    return (latest_close_utc - now_utc).total_seconds()
 
 class MarketLOBRecorder:
     def __init__(self,
