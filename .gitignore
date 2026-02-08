@@ -1,6 +1,21 @@
-# Ignore environment variable and key files
-# .env
-# *.key
+﻿# Secrets
+.env
+*.key
+*.pem
+*.p12
+
+# Python and notebook artifacts
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+
+# Large/local datasets
 *.csv
 *.json
-*jsonl
+*.jsonl

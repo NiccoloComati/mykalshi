@@ -1,5 +1,9 @@
 import pandas as pd
 from datetime import datetime, timedelta
+import time
+import threading
+import random
+from requests.exceptions import HTTPError
 from .transport import kalshi_get
 from .formatting import parse_timestamp, format_timestamp
 
@@ -192,3 +196,187 @@ def get_full_market(series_ticker, ticker, period_interval, start_ts=None, end_t
         "ticker": ticker,
         "candlesticks": all_candles
     }
+
+def get_all_trades(ticker=None, min_ts=None, max_ts=None, batch_size=100, calls_per_sec=30):
+    """
+    Get all trade history for one or more markets using pagination and rate limiting.
+    
+    Parameters:
+        ticker (str): Specific market ticker
+        min_ts (int): Minimum timestamp (Unix time)
+        max_ts (int): Maximum timestamp (Unix time)
+        batch_size (int): Number of trades to fetch per request (max 100)
+        calls_per_sec (int): Maximum API calls per second for rate limiting
+    
+    Returns:
+        List of all trade entries
+    """
+    # Rate limiting setup
+    min_interval = 1.0 / calls_per_sec
+    lock = threading.Lock()
+    last_call = 0.0
+    
+    def wait_rate_limit():
+        nonlocal last_call
+        with lock:
+            now = time.time()
+            elapsed = now - last_call
+            if elapsed < min_interval:
+                time.sleep(min_interval - elapsed)
+            last_call = time.time()
+    
+    all_trades = []
+    cursor = None
+    
+    while True:
+        wait_rate_limit()
+        
+        response = get_trades(
+            ticker=ticker,
+            limit=batch_size,
+            cursor=cursor,
+            min_ts=min_ts,
+            max_ts=max_ts
+        )
+        
+        trades = response.get("trades", [])
+        all_trades.extend(trades)
+        
+        # Check for more pages
+        cursor = response.get("cursor")
+        if not cursor or len(trades) < batch_size:
+            break
+    
+    return {
+        "ticker": ticker,
+        "trades": all_trades,
+        "total_count": len(all_trades)
+    }
+
+def get_all_trades_robust(ticker=None, min_ts=None, max_ts=None, batch_size=100, 
+                          calls_per_sec=30, max_retries=5, base_backoff=0.1):
+    """
+    Get all trade history for one or more markets using pagination, rate limiting, and error handling.
+    
+    Parameters:
+        ticker (str): Specific market ticker
+        min_ts (int): Minimum timestamp (Unix time)
+        max_ts (int): Maximum timestamp (Unix time)
+        batch_size (int): Number of trades to fetch per request (max 100)
+        calls_per_sec (int): Maximum API calls per second for rate limiting
+        max_retries (int): Maximum number of retries for failed requests
+        base_backoff (float): Base delay for exponential backoff
+    
+    Returns:
+        List of all trade entries
+    """
+    # Rate limiting setup
+    min_interval = 1.0 / calls_per_sec
+    lock = threading.Lock()
+    last_call = 0.0
+    
+    def wait_rate_limit():
+        nonlocal last_call
+        with lock:
+            now = time.time()
+            elapsed = now - last_call
+            if elapsed < min_interval:
+                time.sleep(min_interval - elapsed)
+            last_call = time.time()
+    
+    def make_request_with_retry(cursor=None):
+        last_exc = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                wait_rate_limit()
+                return get_trades(
+                    ticker=ticker,
+                    limit=batch_size,
+                    cursor=cursor,
+                    min_ts=min_ts,
+                    max_ts=max_ts
+                )
+            except HTTPError as http_err:
+                code = getattr(http_err.response, "status_code", None)
+                if code == 429 and attempt < max_retries:
+                    delay = base_backoff * (2 ** (attempt - 1)) * random.uniform(0.8, 1.2)
+                    time.sleep(delay)
+                    last_exc = http_err
+                    continue
+                last_exc = http_err
+                break
+            except Exception as exc:
+                if attempt < max_retries:
+                    delay = base_backoff * random.uniform(0.5, 1.5)
+                    time.sleep(delay)
+                    last_exc = exc
+                    continue
+                last_exc = exc
+                break
+        
+        # If we get here, all retries failed
+        raise last_exc
+    
+    all_trades = []
+    cursor = None
+    
+    while True:
+        try:
+            response = make_request_with_retry(cursor)
+            
+            trades = response.get("trades", [])
+            all_trades.extend(trades)
+            
+            # Check for more pages
+            cursor = response.get("cursor")
+            if not cursor or len(trades) < batch_size:
+                break
+                
+        except Exception as e:
+            print(f"Error fetching trades for {ticker}: {e}")
+            break
+    
+    return {
+        "ticker": ticker,
+        "trades": all_trades,
+        "total_count": len(all_trades)
+    }
+
+def trades_to_dataframe(trades_result):
+    """
+    Convert trades result to a pandas DataFrame for easier analysis.
+    
+    Parameters:
+        trades_result (dict): Result from get_all_trades or get_all_trades_robust
+    
+    Returns:
+        pandas.DataFrame: DataFrame with trade data
+    """
+    if not trades_result.get('trades'):
+        return pd.DataFrame()
+    
+    rows = []
+    for trade in trades_result['trades']:
+        row = {
+            'ticker': trade.get('ticker'),
+            'timestamp': format_timestamp(trade.get('ts')) if trade.get('ts') else None,
+            'ts': trade.get('ts'),
+            'price': trade.get('price'),
+            'size': trade.get('size'),
+            'side': trade.get('side'),
+            'order_id': trade.get('order_id'),
+            'trade_id': trade.get('trade_id')
+        }
+        rows.append(row)
+    
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        # Convert timestamp to datetime if available
+        if 'ts' in df.columns:
+            df['datetime'] = pd.to_datetime(df['ts'], unit='s')
+        
+        # Sort by timestamp
+        if 'ts' in df.columns:
+            df = df.sort_values('ts')
+    
+    return df
