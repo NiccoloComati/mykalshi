@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from typing import Any, Callable, Iterable, Protocol, Sequence
 
 from .. import historical
 from ..fixed_point import dollars_to_cents, format_decimal, quantize_count
+
+
+CENT = Decimal("0.01")
+CENTICENT = Decimal("0.0001")
 
 
 def _cash(value: int | float | str | Decimal) -> Decimal:
@@ -29,6 +33,19 @@ def _extract_trade_prices(trade: dict[str, Any]) -> tuple[int, int]:
     return yes_price_cents, no_price_cents
 
 
+def _price_dollars(price_cents: int) -> Decimal:
+    return (Decimal(price_cents) / Decimal("100")).quantize(Decimal("0.0001"))
+
+
+def _calculate_max_drawdown(marks: Iterable["BacktestMark"]) -> Decimal:
+    peak: Decimal | None = None
+    max_drawdown = Decimal("0.00")
+    for mark in marks:
+        peak = mark.equity_cents if peak is None else max(peak, mark.equity_cents)
+        max_drawdown = max(max_drawdown, peak - mark.equity_cents)
+    return max_drawdown.quantize(CENT)
+
+
 def load_historical_trades(
     ticker: str,
     *,
@@ -49,6 +66,9 @@ def load_historical_trades(
 class TradeSignal:
     action: str
     quantity: int | float | str | Decimal = 1
+    limit_price_cents: int | None = None
+    slippage_cents: int = 0
+    tag: str | None = None
     note: str | None = None
 
 
@@ -62,6 +82,7 @@ class BacktestFill:
     cash_after_cents: Decimal
     yes_position: Decimal
     no_position: Decimal
+    tag: str | None = None
     note: str | None = None
 
 
@@ -76,14 +97,32 @@ class BacktestMark:
     equity_cents: Decimal
 
 
+@dataclass(frozen=True)
+class BacktestOrder:
+    timestamp: str
+    action: str
+    quantity: Decimal
+    requested_limit_price_cents: int | None
+    execution_price_cents: int | None
+    status: str
+    fee_cents: Decimal = Decimal("0.00")
+    reason: str | None = None
+    tag: str | None = None
+    note: str | None = None
+
+
 @dataclass
 class BacktestResult:
     ticker: str | None
     initial_cash_cents: Decimal
     final_cash_cents: Decimal
     final_equity_cents: Decimal
+    total_fees_cents: Decimal
+    net_profit_cents: Decimal
+    max_drawdown_cents: Decimal
     yes_position: Decimal
     no_position: Decimal
+    orders: list[BacktestOrder]
     fills: list[BacktestFill]
     marks: list[BacktestMark]
 
@@ -93,19 +132,131 @@ class BacktestResult:
             "initial_cash_cents": format_decimal(self.initial_cash_cents),
             "final_cash_cents": format_decimal(self.final_cash_cents),
             "final_equity_cents": format_decimal(self.final_equity_cents),
+            "total_fees_cents": format_decimal(self.total_fees_cents),
+            "net_profit_cents": format_decimal(self.net_profit_cents),
+            "max_drawdown_cents": format_decimal(self.max_drawdown_cents),
             "yes_position": format_decimal(self.yes_position),
             "no_position": format_decimal(self.no_position),
+            "order_count": len(self.orders),
             "fill_count": len(self.fills),
             "mark_count": len(self.marks),
         }
 
 
-FeeModel = Callable[[TradeSignal, dict[str, Any], int, int], int | float | str | Decimal]
+FeeModel = Callable[..., int | float | str | Decimal]
 
 
 class StrategyProtocol(Protocol):
     def on_trade(self, context: "BacktestContext", trade: dict[str, Any]) -> TradeSignal | Sequence[TradeSignal] | None:
         ...
+
+
+@dataclass(frozen=True)
+class ExecutionDecision:
+    status: str
+    execution_price_cents: int | None = None
+    reason: str | None = None
+
+
+class ImmediateTradeExecutionModel:
+    def __init__(self, *, default_slippage_cents: int = 0) -> None:
+        self.default_slippage_cents = default_slippage_cents
+
+    @staticmethod
+    def _clip_price(price_cents: int) -> int:
+        return max(0, min(100, price_cents))
+
+    @staticmethod
+    def _limit_satisfied(action: str, price_cents: int, limit_price_cents: int | None) -> bool:
+        if limit_price_cents is None:
+            return True
+        if action.startswith("buy"):
+            return price_cents <= limit_price_cents
+        if action.startswith("sell"):
+            return price_cents >= limit_price_cents
+        return False
+
+    def evaluate(
+        self,
+        signal: TradeSignal,
+        trade: dict[str, Any],
+        *,
+        yes_price_cents: int,
+        no_price_cents: int,
+    ) -> ExecutionDecision:
+        action = signal.action.lower()
+        base_price_cents = yes_price_cents if action.endswith("yes") else no_price_cents
+        slippage_cents = max(0, int(signal.slippage_cents or self.default_slippage_cents))
+
+        if action.startswith("buy"):
+            execution_price_cents = self._clip_price(base_price_cents + slippage_cents)
+        elif action.startswith("sell"):
+            execution_price_cents = self._clip_price(base_price_cents - slippage_cents)
+        else:
+            return ExecutionDecision(status="rejected", reason=f"Unsupported action: {signal.action!r}")
+
+        if not self._limit_satisfied(action, execution_price_cents, signal.limit_price_cents):
+            return ExecutionDecision(
+                status="rejected",
+                reason=f"Limit price {signal.limit_price_cents} not met by execution price {execution_price_cents}",
+            )
+
+        return ExecutionDecision(status="filled", execution_price_cents=execution_price_cents)
+
+
+class ZeroFeeModel:
+    def __call__(
+        self,
+        signal: TradeSignal,
+        trade: dict[str, Any],
+        yes_price_cents: int,
+        no_price_cents: int,
+        execution_price_cents: int,
+    ) -> Decimal:
+        return Decimal("0.00")
+
+
+class FixedPerContractFeeModel:
+    def __init__(self, cents_per_contract: int | float | str | Decimal) -> None:
+        self.cents_per_contract = _cash(cents_per_contract)
+
+    def __call__(
+        self,
+        signal: TradeSignal,
+        trade: dict[str, Any],
+        yes_price_cents: int,
+        no_price_cents: int,
+        execution_price_cents: int,
+    ) -> Decimal:
+        quantity = quantize_count(signal.quantity)
+        return (quantity * self.cents_per_contract).quantize(CENT)
+
+
+class KalshiTakerFeeModel:
+    def __init__(self, *, rate: int | float | str | Decimal = Decimal("0.07")) -> None:
+        self.rate = Decimal(str(rate))
+
+    def __call__(
+        self,
+        signal: TradeSignal,
+        trade: dict[str, Any],
+        yes_price_cents: int,
+        no_price_cents: int,
+        execution_price_cents: int,
+    ) -> Decimal:
+        quantity = quantize_count(signal.quantity)
+        price_dollars = _price_dollars(execution_price_cents)
+        raw_trade_fee_dollars = self.rate * quantity * price_dollars * (Decimal("1") - price_dollars)
+        trade_fee_dollars = raw_trade_fee_dollars.quantize(CENTICENT, rounding=ROUND_CEILING)
+
+        revenue_dollars = quantity * price_dollars
+        if signal.action.lower().startswith("buy"):
+            revenue_dollars = -revenue_dollars
+
+        net_balance_change_dollars = revenue_dollars - trade_fee_dollars
+        rounded_balance_change_dollars = net_balance_change_dollars.quantize(CENT, rounding=ROUND_FLOOR)
+        effective_fee_dollars = abs(revenue_dollars - rounded_balance_change_dollars)
+        return (effective_fee_dollars * 100).quantize(CENT)
 
 
 @dataclass
@@ -114,6 +265,7 @@ class BacktestContext:
     cash_cents: Decimal
     yes_position: Decimal = field(default_factory=lambda: Decimal("0.00"))
     no_position: Decimal = field(default_factory=lambda: Decimal("0.00"))
+    orders: list[BacktestOrder] = field(default_factory=list)
     fills: list[BacktestFill] = field(default_factory=list)
     marks: list[BacktestMark] = field(default_factory=list)
 
@@ -140,18 +292,15 @@ class BacktestContext:
         signal: TradeSignal,
         trade: dict[str, Any],
         *,
-        yes_price_cents: int,
-        no_price_cents: int,
-        fee_model: FeeModel | None = None,
+        execution_price_cents: int,
+        fee_cents: Decimal,
     ) -> BacktestFill:
         quantity = quantize_count(signal.quantity)
         if quantity <= 0:
             raise ValueError("TradeSignal.quantity must be positive")
 
         action = signal.action.lower()
-        price_cents = yes_price_cents if action.endswith("yes") else no_price_cents
-        fee_cents = _cash(fee_model(signal, trade, yes_price_cents, no_price_cents) if fee_model else 0)
-        gross_cash_change = quantity * Decimal(price_cents)
+        gross_cash_change = quantity * Decimal(execution_price_cents)
 
         if action == "buy_yes":
             total_cost = gross_cash_change + fee_cents
@@ -183,11 +332,12 @@ class BacktestContext:
             timestamp=str(trade.get("created_time") or trade.get("ts") or ""),
             action=action,
             quantity=quantity,
-            price_cents=price_cents,
+            price_cents=execution_price_cents,
             fee_cents=fee_cents,
             cash_after_cents=self.cash_cents,
             yes_position=self.yes_position,
             no_position=self.no_position,
+            tag=signal.tag,
             note=signal.note,
         )
         self.fills.append(fill)
@@ -195,8 +345,14 @@ class BacktestContext:
 
 
 class TradeBacktester:
-    def __init__(self, *, fee_model: FeeModel | None = None) -> None:
-        self.fee_model = fee_model
+    def __init__(
+        self,
+        *,
+        fee_model: FeeModel | None = None,
+        execution_model: ImmediateTradeExecutionModel | None = None,
+    ) -> None:
+        self.fee_model = fee_model or ZeroFeeModel()
+        self.execution_model = execution_model or ImmediateTradeExecutionModel()
 
     @staticmethod
     def _normalize_signals(result: TradeSignal | Sequence[TradeSignal] | None) -> list[TradeSignal]:
@@ -216,6 +372,36 @@ class TradeBacktester:
             return strategy.on_trade(context, trade)
         return strategy(context, trade)
 
+    @staticmethod
+    def _call_optional_hook(strategy: Any, hook_name: str, context: BacktestContext) -> None:
+        hook = getattr(strategy, hook_name, None)
+        if callable(hook):
+            hook(context)
+
+    @staticmethod
+    def _call_fee_model(
+        fee_model: FeeModel | None,
+        signal: TradeSignal,
+        trade: dict[str, Any],
+        yes_price_cents: int,
+        no_price_cents: int,
+        execution_price_cents: int,
+    ) -> Decimal:
+        if fee_model is None:
+            return Decimal("0.00")
+        try:
+            return _cash(
+                fee_model(
+                    signal,
+                    trade,
+                    yes_price_cents,
+                    no_price_cents,
+                    execution_price_cents,
+                )
+            )
+        except TypeError:
+            return _cash(fee_model(signal, trade, yes_price_cents, no_price_cents))
+
     def run(
         self,
         trades: Iterable[dict[str, Any]],
@@ -234,17 +420,61 @@ class TradeBacktester:
             no_position=quantize_count(initial_no_position),
         )
 
+        self._call_optional_hook(strategy, "on_start", context)
         last_mark: BacktestMark | None = None
         for trade in ordered_trades:
             yes_price_cents, no_price_cents = _extract_trade_prices(trade)
             signals = self._normalize_signals(self._call_strategy(strategy, context, trade))
             for signal in signals:
-                context.execute(
+                decision = self.execution_model.evaluate(
                     signal,
                     trade,
                     yes_price_cents=yes_price_cents,
                     no_price_cents=no_price_cents,
-                    fee_model=self.fee_model,
+                )
+                if decision.status != "filled" or decision.execution_price_cents is None:
+                    context.orders.append(
+                        BacktestOrder(
+                            timestamp=str(trade.get("created_time") or trade.get("ts") or ""),
+                            action=signal.action.lower(),
+                            quantity=quantize_count(signal.quantity),
+                            requested_limit_price_cents=signal.limit_price_cents,
+                            execution_price_cents=None,
+                            status=decision.status,
+                            reason=decision.reason,
+                            tag=signal.tag,
+                            note=signal.note,
+                        )
+                    )
+                    continue
+
+                fee_cents = self._call_fee_model(
+                    self.fee_model,
+                    signal,
+                    trade,
+                    yes_price_cents,
+                    no_price_cents,
+                    decision.execution_price_cents,
+                )
+                context.execute(
+                    signal,
+                    trade,
+                    execution_price_cents=decision.execution_price_cents,
+                    fee_cents=fee_cents,
+                )
+                context.orders.append(
+                    BacktestOrder(
+                        timestamp=str(trade.get("created_time") or trade.get("ts") or ""),
+                        action=signal.action.lower(),
+                        quantity=quantize_count(signal.quantity),
+                        requested_limit_price_cents=signal.limit_price_cents,
+                        execution_price_cents=decision.execution_price_cents,
+                        status=decision.status,
+                        fee_cents=fee_cents,
+                        reason=decision.reason,
+                        tag=signal.tag,
+                        note=signal.note,
+                    )
                 )
             last_mark = context.mark(
                 str(trade.get("created_time") or trade.get("ts") or ""),
@@ -252,14 +482,20 @@ class TradeBacktester:
                 no_price_cents,
             )
 
+        self._call_optional_hook(strategy, "on_finish", context)
         final_equity = last_mark.equity_cents if last_mark is not None else context.cash_cents
+        total_fees_cents = sum((fill.fee_cents for fill in context.fills), Decimal("0.00")).quantize(CENT)
         return BacktestResult(
             ticker=ticker,
             initial_cash_cents=_cash(initial_cash_cents),
             final_cash_cents=context.cash_cents,
             final_equity_cents=final_equity,
+            total_fees_cents=total_fees_cents,
+            net_profit_cents=(final_equity - _cash(initial_cash_cents)).quantize(CENT),
+            max_drawdown_cents=_calculate_max_drawdown(context.marks),
             yes_position=context.yes_position,
             no_position=context.no_position,
+            orders=list(context.orders),
             fills=list(context.fills),
             marks=list(context.marks),
         )

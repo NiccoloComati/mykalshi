@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from mykalshi.research.backtest import TradeBacktester, TradeSignal
+from mykalshi.research.backtest import KalshiTakerFeeModel, TradeBacktester, TradeSignal
 
 
 class BuyThenSellStrategy:
@@ -17,6 +17,21 @@ class BuyThenSellStrategy:
         if self.calls == 2:
             return TradeSignal("sell_yes", quantity=1)
         return None
+
+
+class HookedStrategy:
+    def __init__(self) -> None:
+        self.started = False
+        self.finished = False
+
+    def on_start(self, context):
+        self.started = True
+
+    def on_trade(self, context, trade):
+        return TradeSignal("buy_yes", quantity=1, limit_price_cents=30)
+
+    def on_finish(self, context):
+        self.finished = True
 
 
 class TradeBacktesterTests(unittest.TestCase):
@@ -45,6 +60,7 @@ class TradeBacktesterTests(unittest.TestCase):
         self.assertEqual(str(result.final_equity_cents), "115.00")
         self.assertEqual(str(result.yes_position), "0.00")
         self.assertEqual(len(result.fills), 2)
+        self.assertEqual(len(result.orders), 2)
 
     def test_run_on_historical_trades_uses_historical_module(self):
         trades = [
@@ -69,6 +85,48 @@ class TradeBacktesterTests(unittest.TestCase):
         self.assertEqual(result.ticker, "FED-23DEC-T3.00")
         self.assertEqual(str(result.final_cash_cents), "100.00")
         self.assertEqual(len(result.marks), 1)
+
+    def test_limit_order_can_be_rejected_without_fill(self):
+        strategy = HookedStrategy()
+        trades = [
+            {
+                "created_time": "2026-03-15T12:00:00Z",
+                "yes_price_dollars": "0.4000",
+                "no_price_dollars": "0.6000",
+            }
+        ]
+
+        result = TradeBacktester().run(
+            trades,
+            strategy,
+            ticker="FED-23DEC-T3.00",
+            initial_cash_cents=100,
+        )
+
+        self.assertTrue(strategy.started)
+        self.assertTrue(strategy.finished)
+        self.assertEqual(len(result.fills), 0)
+        self.assertEqual(result.orders[0].status, "rejected")
+        self.assertEqual(str(result.final_cash_cents), "100.00")
+
+    def test_kalshi_taker_fee_model_applies_rounded_fee(self):
+        trades = [
+            {
+                "created_time": "2026-03-15T12:00:00Z",
+                "yes_price_dollars": "0.5000",
+                "no_price_dollars": "0.5000",
+            }
+        ]
+
+        result = TradeBacktester(fee_model=KalshiTakerFeeModel()).run(
+            trades,
+            lambda context, trade: TradeSignal("buy_yes", quantity=1),
+            ticker="FED-23DEC-T3.00",
+            initial_cash_cents=100,
+        )
+
+        self.assertEqual(str(result.total_fees_cents), "2.00")
+        self.assertEqual(str(result.final_cash_cents), "48.00")
 
 
 if __name__ == "__main__":

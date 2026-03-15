@@ -229,23 +229,32 @@ Use a real archived ticker, not a placeholder.
 
 ```python
 from mykalshi import historical
-from mykalshi.research import TradeBacktester, TradeSignal
+from mykalshi.research import KalshiTakerFeeModel, TradeBacktester, TradeSignal
 
 sample_trade = historical.get_historical_trades(limit=1)["trades"][0]
 ticker = sample_trade["ticker"]
 
 def strategy(context, trade):
     if context.yes_position == 0:
-        return TradeSignal("buy_yes", quantity=1)
+        return TradeSignal("buy_yes", quantity=1, limit_price_cents=60)
     return None
 
-result = TradeBacktester().run_on_historical_trades(
+result = TradeBacktester(fee_model=KalshiTakerFeeModel()).run_on_historical_trades(
     ticker,
     strategy,
     initial_cash_cents=10000,
 )
 print(result.summary())
 ```
+
+Current backtest engine features include:
+
+- strategy callbacks
+- limit-price support
+- explicit rejected vs filled orders
+- pluggable fee models
+- a Kalshi-style taker fee model
+- mark-to-market summaries with drawdown
 
 ## 10. Trading
 
