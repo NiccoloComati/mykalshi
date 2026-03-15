@@ -66,6 +66,16 @@ class OrderbookMarketEvent(MarketEvent):
     best_no_ask_cents: int | None = None
     yes_levels: tuple[tuple[int, Decimal], ...] = ()
     no_levels: tuple[tuple[int, Decimal], ...] = ()
+    previous_yes_levels: tuple[tuple[int, Decimal], ...] = ()
+    previous_no_levels: tuple[tuple[int, Decimal], ...] = ()
+    best_yes_bid_size: Decimal | None = None
+    best_yes_ask_size: Decimal | None = None
+    previous_best_yes_bid_size: Decimal | None = None
+    previous_best_yes_ask_size: Decimal | None = None
+    previous_best_yes_bid_cents: int | None = None
+    previous_best_yes_ask_cents: int | None = None
+    previous_best_no_bid_cents: int | None = None
+    previous_best_no_ask_cents: int | None = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +93,7 @@ class OrderRequest(EngineEvent):
     order_type: str = "market"
     limit_price_cents: int | None = None
     slippage_cents: int = 0
+    latency_events: int = 0
     tag: str | None = None
     note: str | None = None
 
@@ -109,6 +120,10 @@ class OrderEvent(EngineEvent):
     reserved_cash_cents: Decimal = Decimal("0.00")
     reserved_yes_quantity: Decimal = Decimal("0.00")
     reserved_no_quantity: Decimal = Decimal("0.00")
+    liquidity_intent: str | None = None
+    resting_price_cents: int | None = None
+    queue_ahead_quantity: Decimal = Decimal("0.00")
+    remaining_latency_events: int = 0
 
 
 @dataclass(frozen=True)
@@ -120,6 +135,7 @@ class FillEvent(EngineEvent):
     price_cents: int
     fee_cents: Decimal
     order_status: str
+    liquidity_role: str | None = None
     tag: str | None = None
     note: str | None = None
     cash_after_cents: Decimal | None = None
@@ -151,6 +167,16 @@ class MarketState:
     best_no_ask_cents: int | None = None
     yes_levels: tuple[tuple[int, Decimal], ...] = ()
     no_levels: tuple[tuple[int, Decimal], ...] = ()
+    previous_yes_levels: tuple[tuple[int, Decimal], ...] = ()
+    previous_no_levels: tuple[tuple[int, Decimal], ...] = ()
+    best_yes_bid_size: Decimal | None = None
+    best_yes_ask_size: Decimal | None = None
+    previous_best_yes_bid_size: Decimal | None = None
+    previous_best_yes_ask_size: Decimal | None = None
+    previous_best_yes_bid_cents: int | None = None
+    previous_best_yes_ask_cents: int | None = None
+    previous_best_no_bid_cents: int | None = None
+    previous_best_no_ask_cents: int | None = None
     settled: bool = False
     settlement_pending: bool = False
     yes_payout_cents: int | None = None
@@ -166,8 +192,17 @@ class MarketState:
             return
 
         if isinstance(event, TickerMarketEvent):
+            self.previous_best_yes_bid_cents = self.best_yes_bid_cents
+            self.previous_best_yes_ask_cents = self.best_yes_ask_cents
+            self.previous_best_no_bid_cents = self.best_no_bid_cents
+            self.previous_best_no_ask_cents = self.best_no_ask_cents
+            self.previous_best_yes_bid_size = self.best_yes_bid_size
+            self.previous_best_yes_ask_size = self.best_yes_ask_size
+
             self.best_yes_bid_cents = event.yes_bid_cents
             self.best_yes_ask_cents = event.yes_ask_cents
+            self.best_yes_bid_size = quantize_count(event.yes_bid_size) if event.yes_bid_size is not None else None
+            self.best_yes_ask_size = quantize_count(event.yes_ask_size) if event.yes_ask_size is not None else None
             if event.yes_bid_cents is not None:
                 self.best_no_ask_cents = 100 - event.yes_bid_cents
             if event.yes_ask_cents is not None:
@@ -178,6 +213,13 @@ class MarketState:
             return
 
         if isinstance(event, OrderbookMarketEvent):
+            self.previous_best_yes_bid_cents = self.best_yes_bid_cents
+            self.previous_best_yes_ask_cents = self.best_yes_ask_cents
+            self.previous_best_no_bid_cents = self.best_no_bid_cents
+            self.previous_best_no_ask_cents = self.best_no_ask_cents
+            self.previous_yes_levels = self.yes_levels
+            self.previous_no_levels = self.no_levels
+
             self.best_yes_bid_cents = event.best_yes_bid_cents
             self.best_yes_ask_cents = event.best_yes_ask_cents
             self.best_no_bid_cents = event.best_no_bid_cents
@@ -221,6 +263,64 @@ class MarketState:
         if self.best_no_bid_cents is not None:
             return self.best_no_bid_cents, self.top_no_bid_size
         return self.last_trade_no_price_cents, self.last_trade_quantity
+
+
+    @staticmethod
+    def _level_size(levels: tuple[tuple[int, Decimal], ...], price_cents: int) -> Decimal:
+        for level_price, level_size in levels:
+            if int(level_price) == int(price_cents):
+                return quantize_count(level_size)
+        return Decimal("0.00")
+
+    def _consumption_from_orderbook(self, action: str, resting_price_cents: int) -> Decimal:
+        if action in {"sell_yes", "buy_no"}:
+            previous = self._level_size(self.previous_yes_levels, resting_price_cents)
+            current = self._level_size(self.yes_levels, resting_price_cents)
+        else:
+            previous = self._level_size(self.previous_no_levels, resting_price_cents)
+            current = self._level_size(self.no_levels, resting_price_cents)
+        return max(Decimal("0.00"), quantize_count(previous - current))
+
+    def _consumption_from_ticker(self, action: str, resting_price_cents: int) -> Decimal:
+        if action == "sell_yes":
+            if self.previous_best_yes_bid_cents != resting_price_cents or self.best_yes_bid_cents != resting_price_cents:
+                return Decimal("0.00")
+            previous_size = self.previous_best_yes_bid_size
+            current_size = self.best_yes_bid_size
+        elif action == "buy_yes":
+            if self.previous_best_yes_bid_cents != resting_price_cents or self.best_yes_bid_cents != resting_price_cents:
+                return Decimal("0.00")
+            previous_size = self.previous_best_yes_bid_size
+            current_size = self.best_yes_bid_size
+        elif action == "buy_no":
+            target_yes_bid = 100 - resting_price_cents
+            if self.previous_best_yes_bid_cents != target_yes_bid or self.best_yes_bid_cents != target_yes_bid:
+                return Decimal("0.00")
+            previous_size = self.previous_best_yes_bid_size
+            current_size = self.best_yes_bid_size
+        else:
+            target_yes_ask = 100 - resting_price_cents
+            if self.previous_best_yes_ask_cents != target_yes_ask or self.best_yes_ask_cents != target_yes_ask:
+                return Decimal("0.00")
+            previous_size = self.previous_best_yes_ask_size
+            current_size = self.best_yes_ask_size
+
+        if previous_size is None or current_size is None:
+            return Decimal("0.00")
+        return max(Decimal("0.00"), quantize_count(previous_size - current_size))
+
+    def estimated_queue_consumption(self, action: str, resting_price_cents: int, event: MarketEvent) -> Decimal:
+        normalized = normalize_action(action)
+        if isinstance(event, TradeMarketEvent):
+            traded_price = event.yes_price_cents if normalized.endswith("yes") else event.no_price_cents
+            if traded_price != resting_price_cents:
+                return Decimal("0.00")
+            return quantize_count(event.trade_quantity)
+        if isinstance(event, OrderbookMarketEvent):
+            return self._consumption_from_orderbook(normalized, resting_price_cents)
+        if isinstance(event, TickerMarketEvent):
+            return self._consumption_from_ticker(normalized, resting_price_cents)
+        return Decimal("0.00")
 
     def mark_prices(self) -> tuple[int | None, int | None]:
         if self.last_trade_yes_price_cents is not None and self.last_trade_no_price_cents is not None:

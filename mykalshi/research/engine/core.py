@@ -17,7 +17,7 @@ from .events import (
     TickerMarketEvent,
     TradeMarketEvent,
 )
-from .execution import ExecutionDecision, KalshiBinaryFillModel
+from .execution import ExecutionDecision, FillModel, KalshiBinaryFillModel
 from .orders import OrderManager, SimulatedOrder
 from .portfolio import PortfolioState
 from .reporting import BacktestRunResult, PerformanceTracker
@@ -31,7 +31,7 @@ class EventDrivenBacktestEngine:
         self,
         *,
         initial_cash_cents: int | float | str | Decimal = 0,
-        fill_model: Any | None = None,
+        fill_model: FillModel | None = None,
         fee_model: Any | None = None,
     ) -> None:
         self.initial_cash_cents = quantize_count(initial_cash_cents)
@@ -45,13 +45,28 @@ class EventDrivenBacktestEngine:
         market_event: MarketEvent,
         execution_price_cents: int,
         quantity: Decimal,
+        liquidity_role: str | None = None,
     ) -> Decimal:
         if fee_model is None:
             return Decimal("0.00")
         try:
-            return quantize_count(fee_model(order, market_event, execution_price_cents, quantity))
+            return quantize_count(
+                fee_model(
+                    order,
+                    market_event,
+                    execution_price_cents,
+                    quantity,
+                    liquidity_role=liquidity_role,
+                )
+            )
         except TypeError:
-            return quantize_count(fee_model(order, market_event, execution_price_cents))
+            try:
+                return quantize_count(fee_model(order, market_event, execution_price_cents, quantity, liquidity_role))
+            except TypeError:
+                try:
+                    return quantize_count(fee_model(order, market_event, execution_price_cents, quantity))
+                except TypeError:
+                    return quantize_count(fee_model(order, market_event, execution_price_cents))
 
     @staticmethod
     def _dispatch_market_event(strategy: KalshiStrategy, context: StrategyContext, event: MarketEvent) -> None:
@@ -90,6 +105,8 @@ class EventDrivenBacktestEngine:
             return f"Unsupported order type: {request.order_type!r}"
         if request.limit_price_cents is not None and not 0 <= int(request.limit_price_cents) <= 100:
             return "Limit price must be between 0 and 100 cents"
+        if int(getattr(request, "latency_events", 0) or 0) < 0:
+            return "latency_events must be non-negative"
         return None
 
     def _reservation_price_cents(self, order: SimulatedOrder, market_state: MarketState) -> int:
@@ -111,6 +128,7 @@ class EventDrivenBacktestEngine:
             market_event,
             reservation_price_cents,
             quantity,
+            liquidity_role=order.liquidity_intent or "aggressive",
         )
         fee_at_mid = self._call_fee_model(
             self.fee_model,
@@ -118,6 +136,7 @@ class EventDrivenBacktestEngine:
             market_event,
             50,
             quantity,
+            liquidity_role=order.liquidity_intent or "aggressive",
         )
         return max(fee_at_reference, fee_at_mid).quantize(Decimal("0.01"))
 
@@ -286,6 +305,9 @@ class EventDrivenBacktestEngine:
             if order.order_id in processed_order_ids:
                 continue
             processed_order_ids.add(order.order_id)
+            if order.remaining_latency_events > 0:
+                order.remaining_latency_events -= 1
+                continue
             decision: ExecutionDecision | None = self.fill_model.evaluate(order, market_event, market_state)
             if decision is None:
                 continue
@@ -310,6 +332,7 @@ class EventDrivenBacktestEngine:
                 market_event,
                 decision.price_cents,
                 decision.quantity,
+                liquidity_role=decision.liquidity_role,
             )
             can_fill, rejection_reason = self._can_apply_fill(
                 order,
@@ -346,6 +369,7 @@ class EventDrivenBacktestEngine:
                 price_cents=decision.price_cents,
                 fee_cents=fee_cents,
                 order_status=order_event.status,
+                liquidity_role=decision.liquidity_role,
                 tag=order.tag,
                 note=order.note,
             )

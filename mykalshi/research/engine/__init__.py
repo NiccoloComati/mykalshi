@@ -12,7 +12,7 @@ from .events import (
     TickerMarketEvent,
     TradeMarketEvent,
 )
-from .execution import ExecutionDecision, KalshiBinaryFillModel
+from .execution import ExecutionDecision, ImmediateCompatibilityFillModel, KalshiBinaryFillModel, OrderbookAwareFillModel
 from .orders import OrderManager, SimulatedOrder
 from .portfolio import PortfolioState, PositionState
 from .reporting import BacktestRunResult, PerformanceTracker
@@ -26,7 +26,9 @@ __all__ = [
     "ExecutionDecision",
     "FillEvent",
     "HistoricalTradeReplay",
+    "ImmediateCompatibilityFillModel",
     "KalshiBinaryFillModel",
+    "OrderbookAwareFillModel",
     "KalshiStrategy",
     "MarkEvent",
     "MarketDataReplay",

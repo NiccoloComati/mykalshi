@@ -3,7 +3,13 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from mykalshi.research.backtest import KalshiTakerFeeModel, PositionTargetSignal, TradeBacktester, TradeSignal
+from mykalshi.research.backtest import (
+    KalshiMakerTakerFeeModel,
+    KalshiTakerFeeModel,
+    PositionTargetSignal,
+    TradeBacktester,
+    TradeSignal,
+)
 
 
 class BuyThenSellStrategy:
@@ -108,6 +114,32 @@ class TradeBacktesterTests(unittest.TestCase):
         self.assertEqual(len(result.fills), 0)
         self.assertEqual(result.orders[0].status, "rejected")
         self.assertEqual(str(result.final_cash_cents), "100.00")
+
+    def test_maker_taker_fee_model_defaults_to_aggressive_for_legacy_wrapper(self):
+        trades = [
+            {
+                "created_time": "2026-03-15T12:00:00Z",
+                "yes_price_dollars": "0.5000",
+                "no_price_dollars": "0.5000",
+            }
+        ]
+
+        taker_result = TradeBacktester(fee_model=KalshiTakerFeeModel()).run(
+            trades,
+            lambda context, trade: TradeSignal("buy_yes", quantity=1),
+            ticker="FED-23DEC-T3.00",
+            initial_cash_cents=100,
+        )
+        maker_taker_result = TradeBacktester(
+            fee_model=KalshiMakerTakerFeeModel(taker_rate="0.07", maker_rate="0.00")
+        ).run(
+            trades,
+            lambda context, trade: TradeSignal("buy_yes", quantity=1),
+            ticker="FED-23DEC-T3.00",
+            initial_cash_cents=100,
+        )
+
+        self.assertEqual(str(taker_result.total_fees_cents), str(maker_taker_result.total_fees_cents))
 
     def test_kalshi_taker_fee_model_applies_rounded_fee(self):
         trades = [

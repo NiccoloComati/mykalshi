@@ -247,6 +247,7 @@ class PortfolioState:
             price_cents=fill.price_cents,
             fee_cents=fill.fee_cents,
             order_status=fill.order_status,
+            liquidity_role=fill.liquidity_role,
             tag=fill.tag,
             note=fill.note,
             cash_after_cents=self.cash_cents,
