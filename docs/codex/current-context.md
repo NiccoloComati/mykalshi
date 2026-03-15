@@ -36,6 +36,7 @@ Turn `mykalshi` into a clean research and trading toolkit for Kalshi with four s
 The foundation layer has been exercised in the local `.venv` on 2026-03-15.
 
 - unit tests passed: `python -m unittest discover -s tests -v`
+- focused backtest execution-realism tests passed: `python -m unittest tests.test_research_event_engine tests.test_research_backtest -v`
 - import check passed: `import mykalshi`
 - compile check passed: `python -m compileall mykalshi recorder_script.py`
 - live read-only REST checks passed:
@@ -93,6 +94,11 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - `research.engine` is now the new backtest foundation for deterministic event-driven replay.
 - `research.backtest` now routes through `research.engine` instead of maintaining a separate procedural simulator.
 - the event-driven engine now has cash and inventory reservation, explicit cancel/replace state transitions, and a centralized settlement pipeline.
+- the event-driven engine now has pluggable fill models with immediate-compatibility and orderbook-aware queue-sensitive behavior, plus explicit aggressive/passive liquidity-role metadata on fills.
+- the event-driven engine now routes `liquidity_role` into fee-model callbacks and supports maker/taker-aware fee modeling while preserving legacy fee signatures.
+- queue-ahead depletion now also uses orderbook level-size drops and ticker top-of-book size drops (when available) in addition to trade prints.
+- strategies can now set per-order `latency_events` to delay fill eligibility by replay events for deterministic latency simulation.
+- `research.datasets` now provides merged replay helpers so stored ticker/trade and reconstructed orderbook streams can be loaded into one ordered event timeline for engine replay.
 - `research.capture_market_data_sync(...)` is now the preferred entry point for live ticker/trade websocket collection.
 - `routing.get_trades_auto(...)` is now the preferred entry point when code should not need to manually split live and archived trade sources.
 

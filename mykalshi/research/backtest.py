@@ -234,6 +234,7 @@ class ZeroFeeModel:
         yes_price_cents: int,
         no_price_cents: int,
         execution_price_cents: int,
+        liquidity_role: str | None = None,
     ) -> Decimal:
         return Decimal("0.00")
 
@@ -249,6 +250,7 @@ class FixedPerContractFeeModel:
         yes_price_cents: int,
         no_price_cents: int,
         execution_price_cents: int,
+        liquidity_role: str | None = None,
     ) -> Decimal:
         quantity = quantize_count(signal.quantity)
         return (quantity * self.cents_per_contract).quantize(CENT)
@@ -265,6 +267,7 @@ class KalshiTakerFeeModel:
         yes_price_cents: int,
         no_price_cents: int,
         execution_price_cents: int,
+        liquidity_role: str | None = None,
     ) -> Decimal:
         quantity = quantize_count(signal.quantity)
         price_dollars = _price_dollars(execution_price_cents)
@@ -279,6 +282,31 @@ class KalshiTakerFeeModel:
         rounded_balance_change_dollars = net_balance_change_dollars.quantize(CENT, rounding=ROUND_FLOOR)
         effective_fee_dollars = abs(revenue_dollars - rounded_balance_change_dollars)
         return (effective_fee_dollars * 100).quantize(CENT)
+
+
+class KalshiMakerTakerFeeModel:
+    """Fee model that differentiates passive (maker) and aggressive (taker) fills."""
+
+    def __init__(
+        self,
+        *,
+        taker_rate: int | float | str | Decimal = Decimal("0.07"),
+        maker_rate: int | float | str | Decimal = Decimal("0.00"),
+    ) -> None:
+        self.taker_model = KalshiTakerFeeModel(rate=taker_rate)
+        self.maker_model = KalshiTakerFeeModel(rate=maker_rate)
+
+    def __call__(
+        self,
+        signal: TradeSignal,
+        trade: dict[str, Any],
+        yes_price_cents: int,
+        no_price_cents: int,
+        execution_price_cents: int,
+        liquidity_role: str | None = None,
+    ) -> Decimal:
+        model = self.maker_model if liquidity_role == "passive" else self.taker_model
+        return model(signal, trade, yes_price_cents, no_price_cents, execution_price_cents)
 
 
 @dataclass
@@ -412,6 +440,7 @@ class _LegacyFillModel:
             status="filled",
             quantity=quantize_count(order.remaining_quantity),
             price_cents=decision.execution_price_cents,
+            liquidity_role="aggressive",
         )
 
 
@@ -419,7 +448,14 @@ class _LegacyFeeModelAdapter:
     def __init__(self, fee_model: FeeModel | None) -> None:
         self.fee_model = fee_model
 
-    def __call__(self, order, market_event, execution_price_cents: int, quantity: Decimal) -> Decimal:
+    def __call__(
+        self,
+        order,
+        market_event,
+        execution_price_cents: int,
+        quantity: Decimal,
+        liquidity_role: str | None = None,
+    ) -> Decimal:
         if self.fee_model is None:
             return Decimal("0.00")
         if isinstance(market_event, TradeMarketEvent) and isinstance(market_event.raw_data, dict):
@@ -450,6 +486,7 @@ class _LegacyFeeModelAdapter:
             yes_price_cents,
             no_price_cents,
             execution_price_cents,
+            liquidity_role=liquidity_role or order.liquidity_intent,
         )
 
 
@@ -815,6 +852,7 @@ class TradeBacktester:
         yes_price_cents: int,
         no_price_cents: int,
         execution_price_cents: int,
+        liquidity_role: str | None = None,
     ) -> Decimal:
         if fee_model is None:
             return Decimal("0.00")
@@ -826,10 +864,34 @@ class TradeBacktester:
                     yes_price_cents,
                     no_price_cents,
                     execution_price_cents,
+                    liquidity_role=liquidity_role,
                 )
             )
         except TypeError:
-            return _cash(fee_model(signal, trade, yes_price_cents, no_price_cents))
+            try:
+                return _cash(
+                    fee_model(
+                        signal,
+                        trade,
+                        yes_price_cents,
+                        no_price_cents,
+                        execution_price_cents,
+                        liquidity_role,
+                    )
+                )
+            except TypeError:
+                try:
+                    return _cash(
+                        fee_model(
+                            signal,
+                            trade,
+                            yes_price_cents,
+                            no_price_cents,
+                            execution_price_cents,
+                        )
+                    )
+                except TypeError:
+                    return _cash(fee_model(signal, trade, yes_price_cents, no_price_cents))
 
     @staticmethod
     def _resolve_market_ticker(ticker: str | None, ordered_trades: list[dict[str, Any]]) -> str | None:

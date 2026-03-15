@@ -4,7 +4,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mykalshi.research.datasets import load_orderbook_events, replay_orderbook_events
+from mykalshi.research.datasets import (
+    load_orderbook_events,
+    load_replay_event_stream,
+    merge_replay_event_streams,
+    replay_orderbook_events,
+)
 from mykalshi.research.storage import ParquetOrderbookSink, SQLiteOrderbookSink
 
 
@@ -76,6 +81,33 @@ def delta_event() -> dict:
     }
 
 
+def trade_market_data_event() -> dict:
+    return {
+        "captured_at": "2026-03-15T12:00:00.500+00:00",
+        "event_type": "trade",
+        "channel": "trade",
+        "market_ticker": "FED-23DEC-T3.00",
+        "yes_price_cents": 23,
+        "no_price_cents": 77,
+        "count_fp": "1.00",
+        "sequence": 1,
+    }
+
+
+def ticker_market_data_event() -> dict:
+    return {
+        "captured_at": "2026-03-15T12:00:00.250+00:00",
+        "event_type": "ticker",
+        "channel": "ticker",
+        "market_ticker": "FED-23DEC-T3.00",
+        "yes_bid_cents": 22,
+        "yes_ask_cents": 46,
+        "yes_bid_size_fp": "180.00",
+        "yes_ask_size_fp": "67.00",
+        "sequence": 1,
+    }
+
+
 class DatasetTests(unittest.TestCase):
     def test_load_orderbook_events_from_sqlite_path(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -103,6 +135,34 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(len(replayed), 2)
         self.assertEqual(replayed[-1]["best_yes_bid_cents"], 22)
         self.assertEqual(replayed[-1]["yes_levels"][0]["count_fp"], "250.00")
+
+    def test_merge_replay_event_streams_sorts_market_data_and_orderbook(self):
+        merged = merge_replay_event_streams(
+            market_data_events=[trade_market_data_event(), ticker_market_data_event()],
+            orderbook_events=[snapshot_event()],
+        )
+
+        self.assertEqual(len(merged), 3)
+        self.assertEqual([event.get("event_type") for event in merged], ["orderbook_snapshot", "ticker", "trade"])
+        self.assertIsNotNone(merged[0].get("yes_levels"))
+
+    def test_load_replay_event_stream_combines_sources(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sqlite_path = Path(tmpdir) / "orderbook.sqlite"
+            with SQLiteOrderbookSink(sqlite_path) as sink:
+                sink.write_orderbook_event(snapshot_event())
+                sink.write_orderbook_event(delta_event())
+                sink.flush()
+
+            merged = load_replay_event_stream(
+                market_data_source=[trade_market_data_event(), ticker_market_data_event()],
+                orderbook_source=sqlite_path,
+                market_ticker="FED-23DEC-T3.00",
+            )
+
+        self.assertEqual([event.get("event_type") for event in merged], ["orderbook_snapshot", "ticker", "trade", "orderbook_delta"])
+        self.assertEqual(merged[-1]["yes_levels"][0]["count_fp"], "250.00")
+
 
 
 if __name__ == "__main__":

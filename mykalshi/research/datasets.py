@@ -43,6 +43,63 @@ def _sort_events(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
+
+
+def merge_replay_event_streams(
+    *,
+    market_data_events: Iterable[dict[str, Any]] | None = None,
+    orderbook_events: Iterable[dict[str, Any]] | None = None,
+    include_replayed_orderbook_levels: bool = True,
+) -> list[dict[str, Any]]:
+    """Merge market-data and orderbook datasets into one replay timeline."""
+
+    merged: list[dict[str, Any]] = []
+    if market_data_events is not None:
+        merged.extend(list(market_data_events))
+    if orderbook_events is not None:
+        merged.extend(
+            replay_orderbook_events(
+                orderbook_events,
+                include_levels=include_replayed_orderbook_levels,
+            )
+        )
+    return _sort_events(merged)
+
+
+def load_replay_event_stream(
+    *,
+    market_data_source: str | Path | Iterable[dict[str, Any]] | Any | None = None,
+    orderbook_source: str | Path | Iterable[dict[str, Any]] | Any | None = None,
+    market_ticker: str | None = None,
+    include_replayed_orderbook_levels: bool = True,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Load and merge research replay events from stored market-data and orderbook sources."""
+
+    market_events: list[dict[str, Any]] = []
+    if market_data_source is not None:
+        market_events = load_market_data_events(
+            market_data_source,
+            market_ticker=market_ticker,
+            limit=None,
+        )
+
+    orderbook_events: list[dict[str, Any]] = []
+    if orderbook_source is not None:
+        orderbook_events = load_orderbook_events(
+            orderbook_source,
+            market_ticker=market_ticker,
+            limit=None,
+        )
+
+    merged = merge_replay_event_streams(
+        market_data_events=market_events,
+        orderbook_events=orderbook_events,
+        include_replayed_orderbook_levels=include_replayed_orderbook_levels,
+    )
+    if limit is not None:
+        return merged[:limit]
+    return merged
 def _sqlite_has_table(path: Path, table_name: str) -> bool:
     connection = sqlite3.connect(path)
     try:

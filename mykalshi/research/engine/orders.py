@@ -33,6 +33,11 @@ class SimulatedOrder:
     reserved_no_quantity: Decimal = Decimal("0.00")
     reservation_cash_per_contract_cents: Decimal = Decimal("0.00")
     replacement_for_order_id: str | None = None
+    liquidity_intent: str | None = None
+    resting_price_cents: int | None = None
+    queue_ahead_quantity: Decimal = Decimal("0.00")
+    latency_events: int = 0
+    remaining_latency_events: int = 0
 
     @property
     def is_open(self) -> bool:
@@ -69,6 +74,10 @@ class OrderManager:
             reserved_cash_cents=order.reserved_cash_cents,
             reserved_yes_quantity=order.reserved_yes_quantity,
             reserved_no_quantity=order.reserved_no_quantity,
+            liquidity_intent=order.liquidity_intent,
+            resting_price_cents=order.resting_price_cents,
+            queue_ahead_quantity=order.queue_ahead_quantity,
+            remaining_latency_events=order.remaining_latency_events,
         )
 
     def create(self, request: OrderRequest) -> SimulatedOrder:
@@ -91,6 +100,8 @@ class OrderManager:
             tag=request.tag,
             note=request.note,
             replacement_for_order_id=getattr(request, "replacement_for_order_id", None),
+            latency_events=max(0, int(getattr(request, "latency_events", 0) or 0)),
+            remaining_latency_events=max(0, int(getattr(request, "latency_events", 0) or 0)),
         )
         self._orders[order_id] = order
         return order
@@ -105,6 +116,7 @@ class OrderManager:
         order.reserved_yes_quantity = Decimal("0.00")
         order.reserved_no_quantity = Decimal("0.00")
         order.reservation_cash_per_contract_cents = Decimal("0.00")
+        order.queue_ahead_quantity = Decimal("0.00")
         return self._build_order_event(order)
 
     def accept(self, order_id: str, *, timestamp: str) -> OrderEvent:
@@ -158,6 +170,9 @@ class OrderManager:
                 reserved_cash_cents=order.reserved_cash_cents,
                 reserved_yes_quantity=order.reserved_yes_quantity,
                 reserved_no_quantity=order.reserved_no_quantity,
+                liquidity_intent=order.liquidity_intent,
+                resting_price_cents=order.resting_price_cents,
+                queue_ahead_quantity=order.queue_ahead_quantity,
             )
             order.reason = original_reason
             return event
@@ -168,6 +183,7 @@ class OrderManager:
         order.reserved_yes_quantity = Decimal("0.00")
         order.reserved_no_quantity = Decimal("0.00")
         order.reservation_cash_per_contract_cents = Decimal("0.00")
+        order.queue_ahead_quantity = Decimal("0.00")
         return self._build_order_event(order)
 
     def cancel_open_orders_for_market(

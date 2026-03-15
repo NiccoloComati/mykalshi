@@ -57,6 +57,7 @@ class StrategyContext:
         quantity: int | float | str | Decimal,
         limit_price_cents: int | None = None,
         slippage_cents: int = 0,
+        latency_events: int = 0,
         tag: str | None = None,
         note: str | None = None,
     ) -> OrderRequest:
@@ -71,6 +72,7 @@ class StrategyContext:
             order_type="limit" if limit_price_cents is not None else "market",
             limit_price_cents=limit_price_cents,
             slippage_cents=slippage_cents,
+            latency_events=int(latency_events or 0),
             tag=tag,
             note=note,
         )

@@ -197,6 +197,42 @@ class YesNoAccountingStrategy(KalshiStrategy):
             self.stage = 2
 
 
+
+
+class PassiveRestingStrategy(KalshiStrategy):
+    def __init__(self, *, limit_price_cents: int, quantity: int | str = 1) -> None:
+        self.limit_price_cents = limit_price_cents
+        self.quantity = quantity
+        self.submitted = False
+
+    def on_orderbook(self, context, event):
+        if not self.submitted:
+            context.buy_yes(event.market_ticker, quantity=self.quantity, limit_price_cents=self.limit_price_cents)
+            self.submitted = True
+
+
+
+
+class PassiveOnTickerStrategy(KalshiStrategy):
+    def __init__(self, *, limit_price_cents: int) -> None:
+        self.limit_price_cents = limit_price_cents
+        self.submitted = False
+
+    def on_ticker(self, context, event):
+        if not self.submitted:
+            context.buy_yes(event.market_ticker, quantity=1, limit_price_cents=self.limit_price_cents)
+            self.submitted = True
+
+class AggressiveVsPassiveStrategy(KalshiStrategy):
+    def __init__(self) -> None:
+        self.submitted = False
+
+    def on_orderbook(self, context, event):
+        if self.submitted:
+            return
+        context.buy_yes(event.market_ticker, quantity=1)
+        context.buy_yes(event.market_ticker, quantity=1, limit_price_cents=40, tag="passive")
+        self.submitted = True
 class SettlementStrategy(KalshiStrategy):
     def __init__(self) -> None:
         self.stage = 0
@@ -225,6 +261,32 @@ class MultipleMarketFamilyStrategy(KalshiStrategy):
         else:
             context.buy_no(event.market_ticker, quantity=1)
         self.done.add(event.market_ticker)
+
+
+
+
+class LatencyAggressiveStrategy(KalshiStrategy):
+    def __init__(self, *, latency_events: int) -> None:
+        self.latency_events = latency_events
+        self.submitted = False
+
+    def on_orderbook(self, context, event):
+        if self.submitted:
+            return
+        context.buy_yes(event.market_ticker, quantity=1, limit_price_cents=100, latency_events=self.latency_events)
+        self.submitted = True
+
+
+class InvalidLatencyStrategy(KalshiStrategy):
+    def on_orderbook(self, context, event):
+        context.buy_yes(event.market_ticker, quantity=1, latency_events=-1)
+class LiquidityRoleFeeModel:
+    def __call__(self, order, market_event, execution_price_cents, quantity, liquidity_role=None):
+        if liquidity_role == "passive":
+            return 1
+        if liquidity_role == "aggressive":
+            return 4
+        return 0
 
 
 class EventDrivenBacktestEngineTests(unittest.TestCase):
@@ -404,6 +466,160 @@ class EventDrivenBacktestEngineTests(unittest.TestCase):
         self.assertEqual(str(result.fills[-1].yes_position), "1.00")
         self.assertEqual(str(result.fills[-1].no_position), "1.00")
         self.assertEqual(str(result.final_equity_cents), "220.00")
+
+    def test_passive_limit_rests_without_immediate_fill(self):
+        result = EventDrivenBacktestEngine(initial_cash_cents=200).run(
+            [
+                book_event("2026-03-15T12:00:00Z", yes_bid=20, yes_ask=60, no_bid=40, no_ask=80, no_size="3.00"),
+                trade_event("2026-03-15T12:01:00Z", yes_price_cents=45, trade_quantity="1.00"),
+            ],
+            PassiveRestingStrategy(limit_price_cents=40),
+        )
+
+        self.assertEqual(len(result.fills), 0)
+        self.assertEqual(result.final_orders[0].status, "accepted")
+        self.assertEqual(str(result.final_orders[0].queue_ahead_quantity), "3.00")
+        self.assertEqual(result.final_orders[0].liquidity_intent, "passive")
+
+    def test_passive_order_partially_fills_across_events(self):
+        result = EventDrivenBacktestEngine(initial_cash_cents=200).run(
+            [
+                book_event("2026-03-15T12:00:00Z", yes_bid=20, yes_ask=60, no_bid=40, no_ask=80, no_size="0.00"),
+                trade_event("2026-03-15T12:01:00Z", yes_price_cents=40, trade_quantity="0.60"),
+                trade_event("2026-03-15T12:02:00Z", yes_price_cents=40, trade_quantity="0.40"),
+            ],
+            PassiveRestingStrategy(limit_price_cents=40),
+        )
+
+        self.assertEqual([event.status for event in result.order_events], ["accepted", "partially_filled", "filled"])
+        self.assertEqual([str(fill.quantity) for fill in result.fills], ["0.60", "0.40"])
+        self.assertTrue(all(fill.liquidity_role == "passive" for fill in result.fills))
+
+    def test_aggressive_and_passive_orders_execute_differently_on_same_replay(self):
+        result = EventDrivenBacktestEngine(initial_cash_cents=300).run(
+            [
+                book_event("2026-03-15T12:00:00Z", yes_bid=35, yes_ask=55, no_bid=45, no_ask=65, no_size="1.00"),
+                trade_event("2026-03-15T12:01:00Z", yes_price_cents=40, trade_quantity="1.00"),
+            ],
+            AggressiveVsPassiveStrategy(),
+        )
+
+        self.assertEqual([fill.liquidity_role for fill in result.fills], ["aggressive", "passive"])
+        self.assertEqual([fill.price_cents for fill in result.fills], [55, 40])
+        self.assertEqual([event.status for event in result.order_events], ["accepted", "accepted", "filled", "filled"])
+
+    def test_orderbook_size_drop_consumes_queue_ahead(self):
+        result = EventDrivenBacktestEngine(initial_cash_cents=200).run(
+            [
+                book_event("2026-03-15T12:00:00Z", yes_bid=20, yes_ask=60, no_bid=40, no_ask=80, no_size="3.00"),
+                book_event("2026-03-15T12:01:00Z", yes_bid=20, yes_ask=60, no_bid=40, no_ask=80, no_size="1.00"),
+                trade_event("2026-03-15T12:02:00Z", yes_price_cents=40, trade_quantity="2.00"),
+            ],
+            PassiveRestingStrategy(limit_price_cents=40),
+        )
+
+        self.assertEqual(len(result.fills), 1)
+        self.assertEqual(result.fills[0].timestamp, "2026-03-15T12:02:00Z")
+
+    def test_ticker_size_drop_can_consume_top_of_book_queue(self):
+        ticker_events = [
+            {
+                "captured_at": "2026-03-15T12:00:00Z",
+                "event_type": "ticker",
+                "channel": "ticker",
+                "market_ticker": "FED-23DEC-T3.00",
+                "yes_bid_cents": 40,
+                "yes_ask_cents": 60,
+                "yes_bid_size_fp": "3.00",
+                "yes_ask_size_fp": "2.00",
+            },
+            {
+                "captured_at": "2026-03-15T12:01:00Z",
+                "event_type": "ticker",
+                "channel": "ticker",
+                "market_ticker": "FED-23DEC-T3.00",
+                "yes_bid_cents": 40,
+                "yes_ask_cents": 60,
+                "yes_bid_size_fp": "1.00",
+                "yes_ask_size_fp": "2.00",
+            },
+            {
+                "captured_at": "2026-03-15T12:02:00Z",
+                "event_type": "trade",
+                "channel": "trade",
+                "market_ticker": "FED-23DEC-T3.00",
+                "yes_price_cents": 40,
+                "no_price_cents": 60,
+                "count_fp": "1.00",
+            },
+            {
+                "captured_at": "2026-03-15T12:03:00Z",
+                "event_type": "trade",
+                "channel": "trade",
+                "market_ticker": "FED-23DEC-T3.00",
+                "yes_price_cents": 40,
+                "no_price_cents": 60,
+                "count_fp": "1.00",
+            },
+        ]
+
+        result = EventDrivenBacktestEngine(initial_cash_cents=200).run(
+            MarketDataReplay.from_market_data_events(ticker_events),
+            PassiveOnTickerStrategy(limit_price_cents=40),
+        )
+
+        self.assertEqual(len(result.fills), 1)
+        self.assertEqual(result.fills[0].timestamp, "2026-03-15T12:03:00Z")
+
+    def test_latency_events_delay_aggressive_fill(self):
+        result = EventDrivenBacktestEngine(initial_cash_cents=200).run(
+            [
+                book_event("2026-03-15T12:00:00Z", yes_bid=35, yes_ask=55, no_bid=45, no_ask=65, no_size="2.00"),
+                trade_event("2026-03-15T12:01:00Z", yes_price_cents=55, trade_quantity="1.00"),
+                trade_event("2026-03-15T12:02:00Z", yes_price_cents=55, trade_quantity="1.00"),
+            ],
+            LatencyAggressiveStrategy(latency_events=1),
+        )
+
+        self.assertEqual(len(result.fills), 1)
+        self.assertEqual(result.fills[0].timestamp, "2026-03-15T12:01:00Z")
+
+    def test_negative_latency_is_rejected(self):
+        result = EventDrivenBacktestEngine(initial_cash_cents=200).run(
+            [book_event("2026-03-15T12:00:00Z", yes_bid=35, yes_ask=55, no_bid=45, no_ask=65, no_size="2.00")],
+            InvalidLatencyStrategy(),
+        )
+
+        self.assertEqual(result.order_events[0].status, "rejected")
+        self.assertIn("latency_events", str(result.order_events[0].reason))
+
+    def test_fee_model_receives_liquidity_role_for_maker_taker_pricing(self):
+        result = EventDrivenBacktestEngine(initial_cash_cents=400, fee_model=LiquidityRoleFeeModel()).run(
+            [
+                book_event("2026-03-15T12:00:00Z", yes_bid=35, yes_ask=55, no_bid=45, no_ask=65, no_size="1.00"),
+                trade_event("2026-03-15T12:01:00Z", yes_price_cents=40, trade_quantity="1.00"),
+                trade_event("2026-03-15T12:02:00Z", yes_price_cents=40, trade_quantity="1.00"),
+            ],
+            AggressiveVsPassiveStrategy(),
+        )
+
+        self.assertEqual([fill.liquidity_role for fill in result.fills], ["aggressive", "passive"])
+        self.assertEqual([str(fill.fee_cents) for fill in result.fills], ["4.00", "1.00"])
+
+    def test_queue_ahead_delays_passive_fill_until_consumed(self):
+        result = EventDrivenBacktestEngine(initial_cash_cents=200).run(
+            [
+                book_event("2026-03-15T12:00:00Z", yes_bid=20, yes_ask=60, no_bid=40, no_ask=80, no_size="2.00"),
+                trade_event("2026-03-15T12:01:00Z", yes_price_cents=40, trade_quantity="1.00"),
+                trade_event("2026-03-15T12:02:00Z", yes_price_cents=40, trade_quantity="1.00"),
+                trade_event("2026-03-15T12:03:00Z", yes_price_cents=40, trade_quantity="1.00"),
+            ],
+            PassiveRestingStrategy(limit_price_cents=40),
+        )
+
+        self.assertEqual(len(result.fills), 1)
+        self.assertEqual(result.fills[0].timestamp, "2026-03-15T12:03:00Z")
+        self.assertEqual(result.fills[0].liquidity_role, "passive")
 
     def test_settlement_cancels_open_orders_and_realizes_payout(self):
         result = EventDrivenBacktestEngine(initial_cash_cents=200).run(
