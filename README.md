@@ -101,13 +101,59 @@ recorder.start(duration_secs=60)
 
 The top-level `recorder_script.py` now acts as a thin deployment script around that library code.
 
+## Research Layer
+
+Authenticated websocket capture lives under `mykalshi.research`:
+
+```python
+from mykalshi.research import KalshiWebsocketClient
+
+client = KalshiWebsocketClient()
+events = client.capture_orderbook_sync(
+    "FED-23DEC-T3.00",
+    max_events=10,
+    duration_secs=30,
+)
+```
+
+SQLite and Parquet sinks can be attached during capture:
+
+```python
+from mykalshi.research import MultiOrderbookSink, ParquetOrderbookSink, SQLiteOrderbookSink
+
+sqlite_sink = SQLiteOrderbookSink("data/orderbook.sqlite")
+parquet_sink = ParquetOrderbookSink("data/parquet")
+sink = MultiOrderbookSink(sqlite_sink, parquet_sink)
+```
+
+Simple historical-trade backtests can now run without notebook CSV glue:
+
+```python
+from mykalshi.research import TradeBacktester, TradeSignal
+
+def strategy(context, trade):
+    if context.yes_position == 0:
+        return TradeSignal("buy_yes", quantity=1)
+    return None
+
+result = TradeBacktester().run_on_historical_trades(
+    "FED-23DEC-T3.00",
+    strategy,
+    initial_cash_cents=10000,
+)
+print(result.summary())
+```
+
 ## Layout
 
 - `mykalshi/client.py`: reusable HTTP client
 - `mykalshi/config.py`: environment and credential loading
 - `mykalshi/auth.py`: request signing helpers
+- `mykalshi/fixed_point.py`: Kalshi fixed-point conversion helpers
+- `mykalshi/orderbook.py`: shared order book normalization/state helpers
 - `mykalshi/historical.py`: historical data endpoints
 - `mykalshi/recorder.py`: order book capture utilities
+- `mykalshi/research/`: websocket capture, storage sinks, and backtest helpers
 - `mykalshi/market.py`, `events.py`, `trading.py`, `communications.py`, `exchange.py`: endpoint wrappers
 
 ## Engineering Log
