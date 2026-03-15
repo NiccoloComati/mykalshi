@@ -28,15 +28,18 @@ The main modules are:
 ```python
 from mykalshi import market, historical, events, trading
 from mykalshi.research import (
+    DiscoveredMarket,
     EventDrivenBacktestEngine,
     HistoricalTradeReplay,
     KalshiWebsocketClient,
     KalshiStrategy,
+    ReplayDataset,
     MultiOrderbookSink,
     ParquetOrderbookSink,
     PositionTargetSignal,
     ProbabilityEdgeStrategy,
     ReplayBacktester,
+    ResearchSession,
     SQLiteOrderbookSink,
     ThresholdSignalStrategy,
     TradeBacktester,
@@ -49,6 +52,16 @@ from mykalshi.research import (
 Do not use literal placeholder strings like `"YOUR_TICKER"`. Pull a real market first.
 
 The higher-level helper for this is `mykalshi.discovery`.
+
+If you want a single user-facing entry point for discovery plus replay/backtest workflows, start with `ResearchSession`:
+
+```python
+from mykalshi.research import ResearchSession
+
+session = ResearchSession()
+matches = session.search_markets(series_ticker="HIGHMIA", status="open", limit=3)
+print(matches[0].summary())
+```
 
 ### By series
 
@@ -109,6 +122,19 @@ match = discovery.resolve_market(
     market_ticker_contains="KXELONMARS-99",
 )
 print(match["market_ticker"])
+```
+
+The session wrapper exposes the same discovery path but returns typed `DiscoveredMarket` objects:
+
+```python
+from mykalshi.research import ResearchSession
+
+session = ResearchSession()
+match = session.resolve_market(
+    event_ticker="KXELONMARS-99",
+    market_ticker_contains="KXELONMARS-99",
+)
+print(match.market_ticker)
 ```
 
 ## 4. Live Market Data
@@ -428,6 +454,39 @@ print(position_view.summary())
 frames = result.to_dataframes()
 print(frames["fills"].head())
 print(frames["markets"].head())
+```
+
+If you want one higher-level object for the whole load-and-run step, use `ResearchSession` plus `ReplayDataset`:
+
+```python
+from mykalshi.research import ResearchSession
+
+session = ResearchSession()
+dataset = session.load_replay_dataset(
+    market_data_source="data/market-data.sqlite",
+    orderbook_source="data/orderbook.sqlite",
+    market_ticker="KXELONMARS-99",
+)
+print(dataset.summary())
+
+result = dataset.backtest(
+    BuyFirstQuoteStrategy(),
+    initial_cash_cents=10000,
+)
+print(result.summary())
+```
+
+Or run the same path in one call:
+
+```python
+result = session.run_replay_backtest(
+    BuyFirstQuoteStrategy(),
+    market_data_source="data/market-data.sqlite",
+    orderbook_source="data/orderbook.sqlite",
+    market_ticker="KXELONMARS-99",
+    initial_cash_cents=10000,
+)
+print(result.summary())
 ```
 
 ## 11. Auto-Route Live And Historical Trades

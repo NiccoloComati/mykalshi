@@ -47,6 +47,7 @@ from .storage import (
     SQLiteOrderbookSink,
 )
 from .strategies import ProbabilityEdgeStrategy, ThresholdSignalStrategy, target_flat, target_no, target_yes
+from .workflows import DiscoveredMarket, ReplayDataset, ResearchSession
 from .websocket import (
     KalshiWebsocketClient,
     SubscriptionRequest,
@@ -61,6 +62,7 @@ __all__ = [
     "BacktestResult",
     "BacktestRunResult",
     "CancelRequest",
+    "DiscoveredMarket",
     "EventDrivenBacktestEngine",
     "FixedPerContractFeeModel",
     "HistoricalTradeReplay",
@@ -83,6 +85,8 @@ __all__ = [
     "PositionSnapshot",
     "ProbabilityEdgeStrategy",
     "ReplayBacktester",
+    "ReplayDataset",
+    "ResearchSession",
     "SQLiteMarketDataSink",
     "SQLiteOrderbookSink",
     "SubscriptionRequest",

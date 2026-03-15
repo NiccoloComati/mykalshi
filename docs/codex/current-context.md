@@ -73,6 +73,10 @@ The foundation layer has been exercised in the local `.venv` on 2026-03-15.
   - `BacktestRunResult.market_summaries()`
   - `BacktestRunResult.position(...)`
   - `BacktestRunResult.to_dataframes()`
+- local workflow/session dry runs passed through:
+  - `ResearchSession.load_replay_dataset(...)`
+  - `ReplayDataset.backtest(...)`
+  - `ResearchSession.run_replay_backtest(...)`
 
 ## Safety Note
 
@@ -80,7 +84,7 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 
 ## Next Implementation Slices
 
-1. Improve higher-level research ergonomics around discovery, load, replay, and backtest workflows.
+1. Continue improving higher-level research ergonomics around discovery and repeatable research workflows.
 2. Add richer market-family and settlement metadata handling where replayed datasets span related contracts.
 3. Expand live trading workflows and safety rails on top of the now-stronger research/backtest core.
 
@@ -105,6 +109,7 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - `research.ReplayBacktester` is now the preferred high-level entry point for backtests over stored replay datasets.
 - `research.ReplayBacktester` now enriches replay timelines with synthetic expiration/settlement events from Kalshi market metadata when replayed data is incomplete.
 - `research.engine.BacktestRunResult` now exposes position snapshots, per-market summaries, turnover/exposure metrics, and dataframe export helpers.
+- `research.workflows` now provides `DiscoveredMarket`, `ReplayDataset`, and `ResearchSession` so discovery, dataset loading, and replay/historical backtests can be driven through one higher-level API.
 - `research.capture_market_data_sync(...)` is now the preferred entry point for live ticker/trade websocket collection.
 - `routing.get_trades_auto(...)` is now the preferred entry point when code should not need to manually split live and archived trade sources.
 

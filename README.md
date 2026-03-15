@@ -63,10 +63,11 @@ Legacy variables from the original repo are still supported:
 ## Quick Start
 
 ```python
-from mykalshi import discovery
+from mykalshi.research import ResearchSession
 
-matches = discovery.search_markets(series_ticker="KXELONMARS", status="open", limit=1)
-print(matches[0]["market_ticker"])
+session = ResearchSession()
+matches = session.search_markets(series_ticker="KXELONMARS", status="open", limit=1)
+print(matches[0].market_ticker)
 ```
 
 ```python
@@ -185,6 +186,33 @@ print(result.position("KXELONMARS-99").summary())
 frames = result.to_dataframes()
 print(frames["fills"].head())
 print(frames["markets"].head())
+```
+
+If you want a higher-level research path that avoids manual discovery/dataset/backtest glue, use `ResearchSession`:
+
+```python
+from mykalshi.research import ResearchSession, KalshiStrategy
+
+class DemoReplayStrategy(KalshiStrategy):
+    def __init__(self):
+        self.submitted = False
+
+    def on_orderbook(self, context, event):
+        if self.submitted:
+            return
+        context.buy_yes(event.market_ticker, quantity=1)
+        self.submitted = True
+
+session = ResearchSession()
+dataset = session.load_replay_dataset(
+    market_data_source="data/market-data.sqlite",
+    orderbook_source="data/orderbook.sqlite",
+    market_ticker="KXELONMARS-99",
+)
+print(dataset.summary())
+
+result = dataset.backtest(DemoReplayStrategy(), initial_cash_cents=10000)
+print(result.summary())
 ```
 
 Trade history can also be auto-routed across live and archived sources:
