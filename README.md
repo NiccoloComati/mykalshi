@@ -151,6 +151,15 @@ events = load_orderbook_events("data/orderbook.sqlite")
 timeline = replay_orderbook_events(events)
 ```
 
+Trade history can also be auto-routed across live and archived sources:
+
+```python
+from mykalshi import routing
+
+trades = routing.get_trades_auto("KXELONMARS-99")
+print(trades["sources_used"])
+```
+
 Simple historical-trade backtests can now run without notebook CSV glue:
 
 ```python
@@ -180,6 +189,7 @@ print(result.summary())
 - `mykalshi/historical.py`: historical data endpoints
 - `mykalshi/recorder.py`: order book capture utilities
 - `mykalshi/research/`: websocket capture, storage sinks, and backtest helpers
+- `mykalshi/routing.py`: live/historical auto-routing helpers
 - `mykalshi/market.py`, `events.py`, `trading.py`, `communications.py`, `exchange.py`: endpoint wrappers
 
 ## Engineering Log

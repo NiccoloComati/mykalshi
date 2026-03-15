@@ -1,4 +1,4 @@
-from . import communications, discovery, events, exchange, historical, market, recorder, research, trading
+from . import communications, discovery, events, exchange, historical, market, recorder, research, routing, trading
 from .client import KalshiClient, get_default_client, reset_default_client, set_default_client
 from .config import KalshiConfig, KalshiEnvironment
 
@@ -16,6 +16,7 @@ __all__ = [
     "recorder",
     "research",
     "reset_default_client",
+    "routing",
     "set_default_client",
     "trading",
 ]

@@ -294,7 +294,17 @@ Current backtest engine features include:
 - a Kalshi-style taker fee model
 - mark-to-market summaries with drawdown
 
-## 11. Trading
+## 11. Auto-Route Live And Historical Trades
+
+```python
+from mykalshi import routing
+
+result = routing.get_trades_auto("KXELONMARS-99", start_ts="03/14/2026 00:00:00")
+print(result["sources_used"])
+print(result["total_count"])
+```
+
+## 12. Trading
 
 Trading/account calls live under `mykalshi.trading`.
 
@@ -309,7 +319,7 @@ print(trading.get_orders(limit=10))
 
 Because your current config is production, do not place/cancel/amend orders unless that is intentional.
 
-## 12. What Broke In Your Terminal
+## 13. What Broke In Your Terminal
 
 ### `historical.get_historical_trades(ticker="YOUR_TICKER", ...)`
 
@@ -329,7 +339,7 @@ For a smoke test, use a real market ticker and `max_events=1`.
 
 Same issue as historical trades above: the placeholder ticker was not real.
 
-## 13. Current Limits
+## 14. Current Limits
 
 This repo is usable, but not yet polished into a single “app” with one command or one end-to-end workflow.
 
