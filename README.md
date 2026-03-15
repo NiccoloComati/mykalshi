@@ -160,6 +160,10 @@ print(result.summary())
 
 Persistent handoff notes for future Codex runs live under `docs/codex/`. The active state is in `docs/codex/current-context.md`, and commit-aligned notes live under `docs/codex/changes/`.
 
+## Usage
+
+Concrete workflows and runnable examples live in `USAGE.md`.
+
 ## Near-Term Roadmap
 
 - richer typed models instead of raw dicts

@@ -233,19 +233,20 @@ class KalshiWebsocketClient:
         include_book_state: bool = False,
     ) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
-        async for event in self.iter_orderbook_events(
-            market_ticker,
-            max_events=max_events,
-            duration_secs=duration_secs,
-            receive_timeout=receive_timeout,
-            include_book_state=include_book_state,
-        ):
-            events.append(event)
-            if sink is not None:
-                sink.write_orderbook_event(event)
-
-        if sink is not None and hasattr(sink, "flush"):
-            sink.flush()
+        try:
+            async for event in self.iter_orderbook_events(
+                market_ticker,
+                max_events=max_events,
+                duration_secs=duration_secs,
+                receive_timeout=receive_timeout,
+                include_book_state=include_book_state,
+            ):
+                events.append(event)
+                if sink is not None:
+                    sink.write_orderbook_event(event)
+        finally:
+            if sink is not None and hasattr(sink, "flush"):
+                sink.flush()
         return events
 
     def capture_orderbook_sync(

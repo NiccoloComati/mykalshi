@@ -46,6 +46,7 @@ The foundation layer has been exercised in the local `.venv` on 2026-03-15.
 - polling recorder compatibility was updated for the current REST `orderbook_fp` response shape
 - live websocket capture into both SQLite and Parquet sinks passed
 - live historical-trade backtest path passed through `TradeBacktester.run_on_historical_trades(...)`
+- a user-facing workflow guide now exists in `USAGE.md`
 
 ## Safety Note
 
@@ -56,6 +57,12 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 1. Higher-level research helpers for replay and dataset loading.
 2. Broader channel coverage beyond orderbook capture.
 3. Strategy examples and fee-model helpers for backtests.
+
+## Recent Usability Notes
+
+- Literal placeholder strings like `"YOUR_TICKER"` are not valid inputs and can cause 404s or long waits.
+- For quick websocket smoke tests, use a real market ticker and `max_events=1`.
+- `market.*` and `historical.*` are intentionally separate because Kalshi splits live/recent data from archived data.
 
 ## Working Conventions
 
