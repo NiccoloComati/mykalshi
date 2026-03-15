@@ -116,6 +116,21 @@ events = client.capture_orderbook_sync(
 )
 ```
 
+Broader market-data capture is also available for `ticker` and `trade` channels:
+
+```python
+from mykalshi.research import KalshiWebsocketClient
+
+client = KalshiWebsocketClient()
+events = client.capture_market_data_sync(
+    channels=["ticker", "trade"],
+    market_ticker="KXELONMARS-99",
+    send_initial_snapshot=True,
+    max_events=2,
+    duration_secs=10,
+)
+```
+
 SQLite and Parquet sinks can be attached during capture:
 
 ```python
@@ -129,8 +144,9 @@ sink = MultiOrderbookSink(sqlite_sink, parquet_sink)
 Captured datasets can then be loaded and replayed:
 
 ```python
-from mykalshi.research import load_orderbook_events, replay_orderbook_events
+from mykalshi.research import load_market_data_events, load_orderbook_events, replay_orderbook_events
 
+market_data = load_market_data_events("data/market-data.sqlite")
 events = load_orderbook_events("data/orderbook.sqlite")
 timeline = replay_orderbook_events(events)
 ```

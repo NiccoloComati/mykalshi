@@ -52,6 +52,8 @@ The foundation layer has been exercised in the local `.venv` on 2026-03-15.
 - live discovery queries passed for series search, market search, and exact market resolution
 - live capture-to-SQLite load/replay round-trip passed
 - live historical backtest passed with Kalshi-style taker fees and limit-order handling
+- live ticker and trade websocket capture passed through the generic market-data path
+- live generic market-data storage round-trip passed for SQLite and Parquet
 
 ## Safety Note
 
@@ -59,9 +61,9 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 
 ## Next Implementation Slices
 
-1. Broader websocket channel coverage beyond orderbook-first capture.
-2. Higher-level historical/live auto-routing helpers.
-3. Additional execution models and strategy examples for backtests.
+1. Higher-level historical/live auto-routing helpers.
+2. Additional execution models and strategy examples for backtests.
+3. More websocket channels beyond ticker/trade/orderbook.
 
 ## Recent Usability Notes
 
@@ -71,6 +73,7 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - `tar_flow.py` and `his_flow.py` are now runnable local smoke-test scripts.
 - `discovery.*` is now the preferred starting point when the user wants to target a specific series, event, or market rather than pull arbitrary markets.
 - `research.backtest` now has a more realistic engine shape: orders, fills, fee models, and limit-price rejection.
+- `research.capture_market_data_sync(...)` is now the preferred entry point for live ticker/trade websocket collection.
 
 ## Working Conventions
 

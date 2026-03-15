@@ -14,6 +14,17 @@ from ..fixed_point import dollars_to_cents
 from ..orderbook import OrderbookState
 
 
+def _captured_at_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+def _event_timestamp(msg: dict[str, Any]) -> str | None:
+    value = msg.get("time") or msg.get("ts")
+    if value is None:
+        return None
+    return str(value)
+
+
 @dataclass(frozen=True)
 class SubscriptionRequest:
     channels: Sequence[str]
@@ -66,14 +77,14 @@ def build_orderbook_event(
     is_snapshot = event_type == "orderbook_snapshot"
     include_levels = is_snapshot or include_book_state
     return {
-        "captured_at": captured_at or datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        "captured_at": captured_at or _captured_at_now(),
         "event_type": event_type,
         "channel": "orderbook_delta",
         "subscription_id": message.get("sid"),
         "sequence": message.get("seq"),
         "market_ticker": msg.get("market_ticker") or state.market_ticker,
         "market_id": msg.get("market_id") or state.market_id,
-        "event_ts": msg.get("ts"),
+        "event_ts": _event_timestamp(msg),
         "side": msg.get("side"),
         "price_cents": dollars_to_cents(msg["price_dollars"]) if msg.get("price_dollars") is not None else None,
         "delta_fp": msg.get("delta_fp"),
@@ -85,6 +96,125 @@ def build_orderbook_event(
         "no_levels": state.serialized_no_levels() if include_levels else None,
         "raw_message": message,
     }
+
+
+def build_ticker_event(
+    message: dict[str, Any],
+    *,
+    captured_at: str | None = None,
+) -> dict[str, Any]:
+    msg = message.get("msg", {})
+    return {
+        "captured_at": captured_at or _captured_at_now(),
+        "event_type": message.get("type"),
+        "channel": "ticker",
+        "subscription_id": message.get("sid"),
+        "sequence": message.get("seq"),
+        "market_ticker": msg.get("market_ticker"),
+        "market_id": msg.get("market_id"),
+        "event_ts": _event_timestamp(msg),
+        "side": None,
+        "price_cents": dollars_to_cents(msg["price_dollars"]) if msg.get("price_dollars") is not None else None,
+        "yes_price_cents": None,
+        "no_price_cents": None,
+        "yes_bid_cents": dollars_to_cents(msg["yes_bid_dollars"]) if msg.get("yes_bid_dollars") is not None else None,
+        "yes_ask_cents": dollars_to_cents(msg["yes_ask_dollars"]) if msg.get("yes_ask_dollars") is not None else None,
+        "yes_bid_size_fp": msg.get("yes_bid_size_fp"),
+        "yes_ask_size_fp": msg.get("yes_ask_size_fp"),
+        "last_trade_size_fp": msg.get("last_trade_size_fp"),
+        "delta_fp": None,
+        "count_fp": None,
+        "volume_fp": msg.get("volume_fp"),
+        "open_interest_fp": msg.get("open_interest_fp"),
+        "dollar_volume": msg.get("dollar_volume"),
+        "dollar_open_interest": msg.get("dollar_open_interest"),
+        "trade_id": None,
+        "taker_side": None,
+        "best_yes_bid_cents": None,
+        "best_yes_ask_cents": None,
+        "best_no_bid_cents": None,
+        "best_no_ask_cents": None,
+        "yes_levels": None,
+        "no_levels": None,
+        "raw_message": message,
+    }
+
+
+def build_trade_event(
+    message: dict[str, Any],
+    *,
+    captured_at: str | None = None,
+) -> dict[str, Any]:
+    msg = message.get("msg", {})
+    return {
+        "captured_at": captured_at or _captured_at_now(),
+        "event_type": message.get("type"),
+        "channel": "trade",
+        "subscription_id": message.get("sid"),
+        "sequence": message.get("seq"),
+        "market_ticker": msg.get("market_ticker"),
+        "market_id": msg.get("market_id"),
+        "event_ts": _event_timestamp(msg),
+        "side": None,
+        "price_cents": None,
+        "yes_price_cents": dollars_to_cents(msg["yes_price_dollars"]) if msg.get("yes_price_dollars") is not None else None,
+        "no_price_cents": dollars_to_cents(msg["no_price_dollars"]) if msg.get("no_price_dollars") is not None else None,
+        "yes_bid_cents": None,
+        "yes_ask_cents": None,
+        "yes_bid_size_fp": None,
+        "yes_ask_size_fp": None,
+        "last_trade_size_fp": None,
+        "delta_fp": None,
+        "count_fp": msg.get("count_fp"),
+        "volume_fp": None,
+        "open_interest_fp": None,
+        "dollar_volume": None,
+        "dollar_open_interest": None,
+        "trade_id": msg.get("trade_id"),
+        "taker_side": msg.get("taker_side"),
+        "best_yes_bid_cents": None,
+        "best_yes_ask_cents": None,
+        "best_no_bid_cents": None,
+        "best_no_ask_cents": None,
+        "yes_levels": None,
+        "no_levels": None,
+        "raw_message": message,
+    }
+
+
+def normalize_market_data_message(
+    message: dict[str, Any],
+    *,
+    orderbook_states: dict[str, OrderbookState] | None = None,
+    include_book_state: bool = False,
+    captured_at: str | None = None,
+) -> dict[str, Any] | None:
+    message_type = message.get("type")
+    if message_type in {"subscribed", "ok", "error", "unsubscribed"}:
+        return None
+
+    if message_type in {"orderbook_snapshot", "orderbook_delta"}:
+        msg = message.get("msg", {})
+        market_key = str(msg.get("market_ticker") or message.get("sid") or "__unknown__")
+        state = (orderbook_states or {}).setdefault(market_key, OrderbookState())
+        if message_type == "orderbook_snapshot":
+            state.apply_snapshot(message)
+        else:
+            state.apply_delta(message)
+        return build_orderbook_event(
+            message,
+            state,
+            captured_at=captured_at,
+            include_book_state=include_book_state,
+        )
+
+    if message_type == "ticker":
+        return build_ticker_event(message, captured_at=captured_at)
+
+    if message_type == "trade":
+        return build_trade_event(message, captured_at=captured_at)
+
+    return None
 
 
 class KalshiWebsocketClient:
@@ -193,31 +323,65 @@ class KalshiWebsocketClient:
         receive_timeout: float = 30.0,
         include_book_state: bool = False,
     ) -> AsyncIterator[dict[str, Any]]:
-        state = OrderbookState()
         events_emitted = 0
         subscription = SubscriptionRequest(
             channels=["orderbook_delta"],
             market_ticker=market_ticker,
             send_initial_snapshot=True,
         )
+        orderbook_states: dict[str, OrderbookState] = {}
         async for message in self.iter_messages(
             subscription,
             duration_secs=duration_secs,
             receive_timeout=receive_timeout,
         ):
-            message_type = message.get("type")
-            if message_type == "orderbook_snapshot":
-                state.apply_snapshot(message)
-            elif message_type == "orderbook_delta":
-                state.apply_delta(message)
-            else:
-                continue
-
-            yield build_orderbook_event(
+            event = normalize_market_data_message(
                 message,
-                state,
+                orderbook_states=orderbook_states,
                 include_book_state=include_book_state,
             )
+            if event is None:
+                continue
+            yield event
+            events_emitted += 1
+            if max_events is not None and events_emitted >= max_events:
+                break
+
+    async def iter_market_data_events(
+        self,
+        *,
+        channels: Sequence[str],
+        market_ticker: str | None = None,
+        market_tickers: Sequence[str] | None = None,
+        max_events: int | None = None,
+        duration_secs: float | None = None,
+        receive_timeout: float = 30.0,
+        send_initial_snapshot: bool | None = None,
+        include_book_state: bool = False,
+        authenticated: bool = True,
+    ) -> AsyncIterator[dict[str, Any]]:
+        events_emitted = 0
+        orderbook_states: dict[str, OrderbookState] = {}
+        subscription = SubscriptionRequest(
+            channels=list(channels),
+            market_ticker=market_ticker,
+            market_tickers=market_tickers,
+            send_initial_snapshot=send_initial_snapshot,
+        )
+        async for message in self.iter_messages(
+            subscription,
+            duration_secs=duration_secs,
+            receive_timeout=receive_timeout,
+            authenticated=authenticated,
+        ):
+            event = normalize_market_data_message(
+                message,
+                orderbook_states=orderbook_states,
+                include_book_state=include_book_state,
+            )
+            if event is None:
+                continue
+            yield event
             events_emitted += 1
             if max_events is not None and events_emitted >= max_events:
                 break
@@ -249,6 +413,44 @@ class KalshiWebsocketClient:
                 sink.flush()
         return events
 
+    async def capture_market_data(
+        self,
+        *,
+        channels: Sequence[str],
+        market_ticker: str | None = None,
+        market_tickers: Sequence[str] | None = None,
+        sink: Any | None = None,
+        max_events: int | None = None,
+        duration_secs: float | None = None,
+        receive_timeout: float = 30.0,
+        send_initial_snapshot: bool | None = None,
+        include_book_state: bool = False,
+        authenticated: bool = True,
+    ) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        try:
+            async for event in self.iter_market_data_events(
+                channels=channels,
+                market_ticker=market_ticker,
+                market_tickers=market_tickers,
+                max_events=max_events,
+                duration_secs=duration_secs,
+                receive_timeout=receive_timeout,
+                send_initial_snapshot=send_initial_snapshot,
+                include_book_state=include_book_state,
+                authenticated=authenticated,
+            ):
+                events.append(event)
+                if sink is not None:
+                    if hasattr(sink, "write_market_data_event"):
+                        sink.write_market_data_event(event)
+                    elif event.get("channel") == "orderbook_delta" and hasattr(sink, "write_orderbook_event"):
+                        sink.write_orderbook_event(event)
+        finally:
+            if sink is not None and hasattr(sink, "flush"):
+                sink.flush()
+        return events
+
     def capture_orderbook_sync(
         self,
         market_ticker: str,
@@ -267,5 +469,34 @@ class KalshiWebsocketClient:
                 duration_secs=duration_secs,
                 receive_timeout=receive_timeout,
                 include_book_state=include_book_state,
+            )
+        )
+
+    def capture_market_data_sync(
+        self,
+        *,
+        channels: Sequence[str],
+        market_ticker: str | None = None,
+        market_tickers: Sequence[str] | None = None,
+        sink: Any | None = None,
+        max_events: int | None = None,
+        duration_secs: float | None = None,
+        receive_timeout: float = 30.0,
+        send_initial_snapshot: bool | None = None,
+        include_book_state: bool = False,
+        authenticated: bool = True,
+    ) -> list[dict[str, Any]]:
+        return asyncio.run(
+            self.capture_market_data(
+                channels=channels,
+                market_ticker=market_ticker,
+                market_tickers=market_tickers,
+                sink=sink,
+                max_events=max_events,
+                duration_secs=duration_secs,
+                receive_timeout=receive_timeout,
+                send_initial_snapshot=send_initial_snapshot,
+                include_book_state=include_book_state,
+                authenticated=authenticated,
             )
         )

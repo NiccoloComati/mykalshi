@@ -213,17 +213,55 @@ parquet_sink.close()
 print(len(events))
 ```
 
-## 8. Load And Replay Stored Orderbook Data
+## 8. Capture Ticker And Trade Streams
 
 ```python
-from mykalshi.research import load_orderbook_events, replay_orderbook_events
+from mykalshi.research import (
+    KalshiWebsocketClient,
+    MultiMarketDataSink,
+    ParquetMarketDataSink,
+    SQLiteMarketDataSink,
+)
 
+sqlite_sink = SQLiteMarketDataSink("data/market-data.sqlite")
+parquet_sink = ParquetMarketDataSink("data/market-data-parquet")
+sink = MultiMarketDataSink(sqlite_sink, parquet_sink)
+
+client = KalshiWebsocketClient()
+ticker_events = client.capture_market_data_sync(
+    channels=["ticker"],
+    market_ticker="KXELONMARS-99",
+    send_initial_snapshot=True,
+    max_events=1,
+    duration_secs=10,
+    sink=sink,
+)
+
+trade_events = client.capture_market_data_sync(
+    channels=["trade"],
+    max_events=1,
+    duration_secs=10,
+    sink=sink,
+)
+
+sqlite_sink.close()
+parquet_sink.close()
+print(ticker_events[0]["channel"], trade_events[0]["channel"])
+```
+
+## 9. Load And Replay Stored Orderbook Data
+
+```python
+from mykalshi.research import load_market_data_events, load_orderbook_events, replay_orderbook_events
+
+market_data = load_market_data_events("data/market-data.sqlite")
 events = load_orderbook_events("data/orderbook.sqlite")
 timeline = replay_orderbook_events(events)
+print(market_data[0]["channel"])
 print(timeline[0]["event_type"])
 ```
 
-## 9. Backtesting On Archived Trades
+## 10. Backtesting On Archived Trades
 
 Use a real archived ticker, not a placeholder.
 
@@ -256,7 +294,7 @@ Current backtest engine features include:
 - a Kalshi-style taker fee model
 - mark-to-market summaries with drawdown
 
-## 10. Trading
+## 11. Trading
 
 Trading/account calls live under `mykalshi.trading`.
 
@@ -271,7 +309,7 @@ print(trading.get_orders(limit=10))
 
 Because your current config is production, do not place/cancel/amend orders unless that is intentional.
 
-## 11. What Broke In Your Terminal
+## 12. What Broke In Your Terminal
 
 ### `historical.get_historical_trades(ticker="YOUR_TICKER", ...)`
 
@@ -291,7 +329,7 @@ For a smoke test, use a real market ticker and `max_events=1`.
 
 Same issue as historical trades above: the placeholder ticker was not real.
 
-## 12. Current Limits
+## 13. Current Limits
 
 This repo is usable, but not yet polished into a single “app” with one command or one end-to-end workflow.
 
