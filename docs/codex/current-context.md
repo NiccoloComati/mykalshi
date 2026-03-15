@@ -24,7 +24,7 @@ Turn `mykalshi` into a clean research and trading toolkit for Kalshi with four s
 - `mykalshi/recorder.py`: reusable polling-based order book recorder
 - `mykalshi/research/websocket.py`: authenticated websocket capture for order book snapshots and deltas
 - `mykalshi/research/storage.py`: SQLite and Parquet sinks for captured order book events
-- `mykalshi/research/backtest.py`: legacy-compatible backtest facade now routed through the event-driven engine
+- `mykalshi/research/backtest.py`: legacy-compatible trade backtester plus first-class replay backtester over captured datasets
 - `mykalshi/research/strategies.py`: reusable threshold and probability-edge strategies
 - `mykalshi/research/engine/`: modular event-driven backtest engine components
 - `mykalshi/research/datasets.py`: load and replay helpers for stored order book datasets
@@ -67,6 +67,7 @@ The foundation layer has been exercised in the local `.venv` on 2026-03-15.
   - archived trade replay through `HistoricalTradeReplay`
   - live ticker replay through `MarketDataReplay`
 - live historical wrapper dry run passed through `TradeBacktester.run_on_historical_trades(...)` after the compatibility migration
+- local replay-wrapper dry runs passed through `ReplayBacktester.run_on_replay_event_stream(...)` and `run_on_captured_dataset(...)`
 
 ## Safety Note
 
@@ -74,12 +75,9 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 
 ## Next Implementation Slices
 
-1. Improve execution realism beyond the current immediate compatibility model:
-   - queue-style logic
-   - orderbook-aware fill assumptions
-   - maker/taker-style behavior
-2. Add richer settlement sourcing and expiration metadata from Kalshi market state when replay data is incomplete.
-3. Expand performance and portfolio analytics on top of the unified engine path.
+1. Add richer settlement sourcing and expiration metadata from Kalshi market state when replay data is incomplete.
+2. Expand performance and portfolio analytics on top of the unified engine path.
+3. Improve higher-level research ergonomics around discovery, load, replay, and backtest workflows.
 
 ## Recent Usability Notes
 
@@ -99,6 +97,7 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - queue-ahead depletion now also uses orderbook level-size drops and ticker top-of-book size drops (when available) in addition to trade prints.
 - strategies can now set per-order `latency_events` to delay fill eligibility by replay events for deterministic latency simulation.
 - `research.datasets` now provides merged replay helpers so stored ticker/trade and reconstructed orderbook streams can be loaded into one ordered event timeline for engine replay.
+- `research.ReplayBacktester` is now the preferred high-level entry point for backtests over stored replay datasets.
 - `research.capture_market_data_sync(...)` is now the preferred entry point for live ticker/trade websocket collection.
 - `routing.get_trades_auto(...)` is now the preferred entry point when code should not need to manually split live and archived trade sources.
 

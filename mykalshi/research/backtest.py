@@ -7,7 +7,16 @@ from typing import Any, Callable, Iterable, Protocol, Sequence
 
 from .. import historical
 from ..fixed_point import dollars_to_cents, format_decimal, quantize_count
-from .engine import EventDrivenBacktestEngine, HistoricalTradeReplay, KalshiStrategy, StrategyContext, TradeMarketEvent
+from .datasets import load_replay_event_stream
+from .engine import (
+    BacktestRunResult,
+    EventDrivenBacktestEngine,
+    HistoricalTradeReplay,
+    KalshiStrategy,
+    MarketDataReplay,
+    StrategyContext,
+    TradeMarketEvent,
+)
 from .engine.events import FillEvent as EngineFillEvent
 from .engine.events import MarkEvent as EngineMarkEvent
 from .engine.events import OrderEvent as EngineOrderEvent
@@ -997,6 +1006,120 @@ class TradeBacktester:
             strategy,
             ticker=ticker,
             initial_cash_cents=initial_cash_cents,
+            initial_yes_position=initial_yes_position,
+            initial_no_position=initial_no_position,
+        )
+
+
+class ReplayBacktester:
+    """High-level backtester for merged replay event streams and captured datasets."""
+
+    def __init__(
+        self,
+        *,
+        fill_model: Any | None = None,
+        fee_model: Any | None = None,
+    ) -> None:
+        self.fill_model = fill_model
+        self.fee_model = fee_model
+
+    @staticmethod
+    def _resolve_market_ticker(market_ticker: str | None, replay_events: Iterable[dict[str, Any]]) -> str | None:
+        if market_ticker is not None:
+            return market_ticker
+        for event in replay_events:
+            event_market_ticker = event.get("market_ticker")
+            if event_market_ticker:
+                return str(event_market_ticker)
+        return None
+
+    @staticmethod
+    def _build_initial_positions(
+        *,
+        market_ticker: str | None,
+        initial_positions: dict[str, dict[str, Any]] | None,
+        initial_yes_position: int | float | str | Decimal,
+        initial_no_position: int | float | str | Decimal,
+    ) -> dict[str, dict[str, Any]] | None:
+        yes_position = quantize_count(initial_yes_position)
+        no_position = quantize_count(initial_no_position)
+        if initial_positions is not None and (yes_position > 0 or no_position > 0):
+            raise ValueError("Provide either initial_positions or initial_yes/no_position, not both")
+        if initial_positions is not None:
+            return initial_positions
+        if yes_position <= 0 and no_position <= 0:
+            return None
+        if market_ticker is None:
+            raise ValueError("market_ticker is required when initial_yes_position or initial_no_position is provided")
+        return {
+            market_ticker: {
+                "yes_quantity": yes_position,
+                "no_quantity": no_position,
+                "yes_average_cost_cents": Decimal("0.00"),
+                "no_average_cost_cents": Decimal("0.00"),
+            }
+        }
+
+    def run_on_replay_event_stream(
+        self,
+        replay_events: Iterable[dict[str, Any]],
+        strategy: KalshiStrategy,
+        *,
+        market_ticker: str | None = None,
+        initial_cash_cents: int | float | str | Decimal = 0,
+        initial_positions: dict[str, dict[str, Any]] | None = None,
+        initial_yes_position: int | float | str | Decimal = 0,
+        initial_no_position: int | float | str | Decimal = 0,
+    ) -> BacktestRunResult:
+        ordered_events = list(replay_events)
+        resolved_market_ticker = self._resolve_market_ticker(market_ticker, ordered_events)
+        built_initial_positions = self._build_initial_positions(
+            market_ticker=resolved_market_ticker,
+            initial_positions=initial_positions,
+            initial_yes_position=initial_yes_position,
+            initial_no_position=initial_no_position,
+        )
+        engine = EventDrivenBacktestEngine(
+            initial_cash_cents=initial_cash_cents,
+            fill_model=self.fill_model,
+            fee_model=self.fee_model,
+        )
+        return engine.run(
+            MarketDataReplay.from_market_data_events(ordered_events),
+            strategy,
+            initial_cash_cents=initial_cash_cents,
+            initial_positions=built_initial_positions,
+        )
+
+    def run_on_captured_dataset(
+        self,
+        strategy: KalshiStrategy,
+        *,
+        market_data_source: str | Any | None = None,
+        orderbook_source: str | Any | None = None,
+        market_ticker: str | None = None,
+        include_replayed_orderbook_levels: bool = True,
+        limit: int | None = None,
+        initial_cash_cents: int | float | str | Decimal = 0,
+        initial_positions: dict[str, dict[str, Any]] | None = None,
+        initial_yes_position: int | float | str | Decimal = 0,
+        initial_no_position: int | float | str | Decimal = 0,
+    ) -> BacktestRunResult:
+        if market_data_source is None and orderbook_source is None:
+            raise ValueError("At least one of market_data_source or orderbook_source must be provided")
+        replay_events = load_replay_event_stream(
+            market_data_source=market_data_source,
+            orderbook_source=orderbook_source,
+            market_ticker=market_ticker,
+            include_replayed_orderbook_levels=include_replayed_orderbook_levels,
+            limit=limit,
+        )
+        return self.run_on_replay_event_stream(
+            replay_events,
+            strategy,
+            market_ticker=market_ticker,
+            initial_cash_cents=initial_cash_cents,
+            initial_positions=initial_positions,
             initial_yes_position=initial_yes_position,
             initial_no_position=initial_no_position,
         )

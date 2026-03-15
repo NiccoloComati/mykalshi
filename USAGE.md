@@ -8,7 +8,7 @@ The main workflows that are usable today are:
 - archived historical data pulls
 - websocket orderbook capture
 - SQLite and Parquet dataset writing
-- simple historical-trade backtests
+- historical-trade and replay-dataset backtests
 
 ## 1. Setup
 
@@ -36,6 +36,7 @@ from mykalshi.research import (
     ParquetOrderbookSink,
     PositionTargetSignal,
     ProbabilityEdgeStrategy,
+    ReplayBacktester,
     SQLiteOrderbookSink,
     ThresholdSignalStrategy,
     TradeBacktester,
@@ -358,6 +359,52 @@ The strategy context exposes:
 
 Stored websocket datasets can also be replayed through the same engine with `MarketDataReplay`.
 
+## 10B. Replay Backtests On Captured Datasets
+
+Use `ReplayBacktester` when you want strategies to react directly to replayed `orderbook`, `ticker`, and `trade` events from stored datasets.
+
+```python
+from mykalshi.research import KalshiStrategy, ReplayBacktester
+
+class BuyFirstQuoteStrategy(KalshiStrategy):
+    def __init__(self):
+        self.submitted = False
+
+    def on_orderbook(self, context, event):
+        if self.submitted:
+            return
+        context.buy_yes(event.market_ticker, quantity=1)
+        self.submitted = True
+
+result = ReplayBacktester().run_on_captured_dataset(
+    BuyFirstQuoteStrategy(),
+    market_data_source="data/market-data.sqlite",
+    orderbook_source="data/orderbook.sqlite",
+    market_ticker="KXELONMARS-99",
+    initial_cash_cents=10000,
+)
+print(result.summary())
+```
+
+If you already loaded a merged replay timeline with `load_replay_event_stream(...)`, you can run it directly:
+
+```python
+from mykalshi.research import ReplayBacktester, load_replay_event_stream
+
+timeline = load_replay_event_stream(
+    market_data_source="data/market-data.sqlite",
+    orderbook_source="data/orderbook.sqlite",
+    market_ticker="KXELONMARS-99",
+)
+
+result = ReplayBacktester().run_on_replay_event_stream(
+    timeline,
+    BuyFirstQuoteStrategy(),
+    initial_cash_cents=10000,
+)
+print(result.summary())
+```
+
 ## 11. Auto-Route Live And Historical Trades
 
 ```python
@@ -410,5 +457,4 @@ This repo is usable, but not yet polished into a single “app” with one comma
 Missing pieces still include:
 
 - more websocket channels beyond orderbook-first capture
-- event-driven replay on stored datasets for backtests
 - a CLI

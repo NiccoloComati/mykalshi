@@ -151,6 +151,31 @@ events = load_orderbook_events("data/orderbook.sqlite")
 timeline = replay_orderbook_events(events)
 ```
 
+Merged replay timelines can also be backtested directly with the higher-level replay wrapper:
+
+```python
+from mykalshi.research import KalshiStrategy, ReplayBacktester
+
+class DemoReplayStrategy(KalshiStrategy):
+    def __init__(self):
+        self.submitted = False
+
+    def on_orderbook(self, context, event):
+        if self.submitted:
+            return
+        context.buy_yes(event.market_ticker, quantity=1)
+        self.submitted = True
+
+result = ReplayBacktester().run_on_captured_dataset(
+    DemoReplayStrategy(),
+    market_data_source="data/market-data.sqlite",
+    orderbook_source="data/orderbook.sqlite",
+    market_ticker="KXELONMARS-99",
+    initial_cash_cents=10000,
+)
+print(result.summary())
+```
+
 Trade history can also be auto-routed across live and archived sources:
 
 ```python
@@ -227,7 +252,6 @@ The engine design note for this refactor lives in `docs/backtest-engine-architec
 ## Near-Term Roadmap
 
 - richer typed models instead of raw dicts
-- historical/live auto-routing helpers for backtests
-- websocket client abstractions for order book delta replay
-- dataset sinks for parquet, sqlite, and object storage
-- event-driven replay on stored market-data datasets
+- settlement and expiration enrichment for replay backtests
+- richer performance analytics and export helpers
+- higher-level trading workflows with stronger safety rails

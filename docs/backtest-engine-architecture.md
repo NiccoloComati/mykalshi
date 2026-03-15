@@ -69,6 +69,7 @@ Implemented now:
 - centralized settlement handling that cancels open orders, waits on missing payouts, and realizes binary payouts once data arrives
 - portfolio/accounting for Kalshi yes/no contracts
 - migration of the legacy `TradeBacktester` surface onto the event-driven engine
+- a higher-level `ReplayBacktester` facade for running event-driven strategies on stored replay datasets
 
 Later work:
 
