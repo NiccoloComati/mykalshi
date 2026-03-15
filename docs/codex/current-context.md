@@ -16,9 +16,12 @@ Turn `mykalshi` into a clean research and trading toolkit for Kalshi with four s
 - `mykalshi/config.py`: environment and credential loading
 - `mykalshi/auth.py`: request signing
 - `mykalshi/client.py`: reusable HTTP client
+- `mykalshi/fixed_point.py`: shared fixed-point conversion helpers
+- `mykalshi/orderbook.py`: shared order book normalization and state tracking
 - `mykalshi/transport.py`: thin wrapper helpers plus cursor pagination
 - `mykalshi/historical.py`: historical endpoints for research and backtesting
 - `mykalshi/recorder.py`: reusable polling-based order book recorder
+- `mykalshi/research/websocket.py`: authenticated websocket capture for order book snapshots and deltas
 - `mykalshi/market.py`, `trading.py`, `exchange.py`, `events.py`, `communications.py`: endpoint wrappers
 
 ## Verified State
@@ -37,6 +40,8 @@ The foundation layer has been exercised in the local `.venv` on 2026-03-15.
   - historical orders
   - authenticated order book
 - live authenticated websocket handshake passed against `wss://api.elections.kalshi.com/trade-api/ws/v2`
+- live orderbook capture through `KalshiWebsocketClient.capture_orderbook_sync(...)` passed
+- polling recorder compatibility was updated for the current REST `orderbook_fp` response shape
 
 ## Safety Note
 
@@ -44,9 +49,9 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 
 ## Next Implementation Slices
 
-1. Authenticated websocket capture with normalized snapshot and delta events.
-2. SQLite and Parquet sinks for captured data.
-3. A simple backtest API that uses `mykalshi.historical` and stored datasets.
+1. SQLite and Parquet sinks for captured data.
+2. A simple backtest API that uses `mykalshi.historical` and stored datasets.
+3. Higher-level research helpers for replay and dataset loading.
 
 ## Working Conventions
 

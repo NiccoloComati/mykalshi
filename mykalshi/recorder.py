@@ -6,10 +6,12 @@ import random
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from decimal import Decimal
 from datetime import datetime, time as dt_time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from . import exchange, market
+from .orderbook import extract_orderbook_levels
 
 
 def seconds_until_exchange_close(
@@ -71,6 +73,12 @@ class MarketLOBRecorder:
         self._writer_thread = threading.Thread(target=self._writer_loop, daemon=True)
         self._writer_thread.start()
 
+    @staticmethod
+    def _decimal_to_number(value: Decimal) -> int | float:
+        if value == value.to_integral_value():
+            return int(value)
+        return float(value)
+
     def _writer_loop(self):
         while True:
             record = self._write_queue.get()
@@ -99,15 +107,21 @@ class MarketLOBRecorder:
             try:
                 self._wait_rate_limit()
                 response = market.get_market_orderbook(ticker=ticker)
-                orderbook = response.get("orderbook") or {}
-                yes_levels = orderbook.get("yes") if isinstance(orderbook.get("yes"), list) else []
-                no_levels = orderbook.get("no") if isinstance(orderbook.get("no"), list) else []
+                yes_levels, no_levels = extract_orderbook_levels(response)
 
                 if not (yes_levels or no_levels):
                     raise ValueError("Empty orderbook arrays")
 
-                bids = {int(price): int(size) for price, size in yes_levels if size > 0}
-                asks = {int(100 - price): int(size) for price, size in no_levels if size > 0}
+                bids = {
+                    int(price): self._decimal_to_number(size)
+                    for price, size in yes_levels.items()
+                    if size > 0
+                }
+                asks = {
+                    int(100 - price): self._decimal_to_number(size)
+                    for price, size in no_levels.items()
+                    if size > 0
+                }
 
                 return {
                     "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
