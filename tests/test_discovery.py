@@ -119,6 +119,95 @@ class DiscoveryTests(unittest.TestCase):
             with self.assertRaises(LookupError):
                 discovery.resolve_market(series_ticker="HIGHMIA")
 
+    def test_search_series_supports_generic_query(self):
+        with patch(
+            "mykalshi.discovery.events.get_series_list",
+            return_value={
+                "series": [
+                    {
+                        "ticker": "KXELONMARS",
+                        "title": "Elon Musk on Mars",
+                        "category": "Technology",
+                        "tags": ["Space", "Mars"],
+                    },
+                    {
+                        "ticker": "RAINNYC",
+                        "title": "Rain in New York",
+                        "category": "Climate and Weather",
+                        "tags": ["Rain"],
+                    },
+                ]
+            },
+        ):
+            result = discovery.search_series(query="elon mars")
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["ticker"], "KXELONMARS")
+
+    def test_search_events_supports_generic_query_across_series_context(self):
+        with patch(
+            "mykalshi.discovery.events.get_series_list",
+            return_value={"series": [{"ticker": "KXELONMARS", "title": "Elon Musk on Mars", "tags": []}]},
+        ), patch(
+            "mykalshi.discovery.events.get_events",
+            return_value={
+                "events": [
+                    {
+                        "event_ticker": "KXELONMARS-99",
+                        "series_ticker": "KXELONMARS",
+                        "title": "Will Elon Musk visit Mars in his lifetime?",
+                        "sub_title": "Before 2099",
+                        "category": "Technology",
+                    }
+                ]
+            },
+        ):
+            result = discovery.search_events(series_ticker="KXELONMARS", query="elon mars 2099")
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["event_ticker"], "KXELONMARS-99")
+
+    def test_search_markets_supports_generic_query_across_event_context(self):
+        with patch(
+            "mykalshi.discovery.events.get_events",
+            return_value={
+                "events": [
+                    {
+                        "event_ticker": "KXELONMARS-99",
+                        "series_ticker": "KXELONMARS",
+                        "title": "Will Elon Musk visit Mars in his lifetime?",
+                        "sub_title": "Before 2099",
+                        "category": "Technology",
+                    }
+                ]
+            },
+        ), patch(
+            "mykalshi.discovery.market.get_markets",
+            return_value={
+                "markets": [
+                    {
+                        "ticker": "KXELONMARS-99",
+                        "title": "Yes before 2099",
+                        "subtitle": "Before 2099",
+                        "status": "open",
+                    }
+                ]
+            },
+        ):
+            result = discovery.search_markets(query="elon mars 2099", status="open")
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["market_ticker"], "KXELONMARS-99")
+
+    def test_resolve_series_and_event_raise_on_ambiguous_result(self):
+        with patch("mykalshi.discovery.search_series", return_value=[{"ticker": "A"}, {"ticker": "B"}]):
+            with self.assertRaises(LookupError):
+                discovery.resolve_series(query="mars")
+
+        with patch("mykalshi.discovery.search_events", return_value=[{"event_ticker": "A"}, {"event_ticker": "B"}]):
+            with self.assertRaises(LookupError):
+                discovery.resolve_event(query="mars")
+
     def test_search_markets_stops_paging_once_limit_is_satisfied(self):
         calls = []
 

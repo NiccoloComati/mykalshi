@@ -80,6 +80,9 @@ The foundation layer has been exercised in the local `.venv` on 2026-03-15.
 - live rate-limit checks passed through:
   - `trading.get_account_limits()` returning `read_limit=20`, `write_limit=10`, `usage_tier=basic`
   - `ResearchSession.search_markets(status="open", limit=1)` after the discovery paging fix
+- live discovery-ergonomics checks passed through:
+  - `discovery.search_markets(query="mars", status="open", limit=2)`
+  - `ResearchSession.search_market_universes(query="mars", status="open", limit=3)`
 
 ## Safety Note
 
@@ -117,6 +120,8 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - `routing.get_trades_auto(...)` is now the preferred entry point when code should not need to manually split live and archived trade sources.
 - `client.KalshiClient` now has centralized account-aware rate limiting, `429` retry handling, and `/account/limits` auto-detection.
 - `discovery.*` now stops paging once search limits are satisfied instead of fetching full result sets and truncating afterward.
+- `discovery.*` now supports a generic `query` path across series/event/market context plus `resolve_series(...)` and `resolve_event(...)`.
+- `research.workflows.ResearchSession` now wraps series/event discovery and grouped market-universe browsing in addition to replay datasets and backtests.
 
 ## Working Conventions
 

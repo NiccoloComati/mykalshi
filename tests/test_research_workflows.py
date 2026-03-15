@@ -59,6 +59,39 @@ class BuyOnFirstOrderbookStrategy(KalshiStrategy):
 
 
 class ResearchWorkflowTests(unittest.TestCase):
+    def test_research_session_wraps_series_and_event_results(self):
+        series_payload = {
+            "ticker": "KXELONMARS",
+            "title": "Elon Musk on Mars",
+            "category": "Technology",
+            "tags": ["Space", "Mars"],
+        }
+        event_payload = {
+            "event_ticker": "KXELONMARS-99",
+            "series_ticker": "KXELONMARS",
+            "title": "Will Elon Musk visit Mars in his lifetime?",
+            "sub_title": "Before 2099",
+            "category": "Technology",
+            "status": "open",
+        }
+        with patch("mykalshi.research.workflows.discovery.search_series", return_value=[series_payload]), patch(
+            "mykalshi.research.workflows.discovery.resolve_series",
+            return_value=series_payload,
+        ), patch("mykalshi.research.workflows.discovery.search_events", return_value=[event_payload]), patch(
+            "mykalshi.research.workflows.discovery.resolve_event",
+            return_value=event_payload,
+        ):
+            session = ResearchSession()
+            series_result = session.search_series(query="mars")
+            resolved_series = session.resolve_series(query="mars")
+            event_result = session.search_events(query="mars")
+            resolved_event = session.resolve_event(query="mars")
+
+        self.assertEqual(series_result[0].ticker, "KXELONMARS")
+        self.assertEqual(resolved_series.summary()["category"], "Technology")
+        self.assertEqual(event_result[0].event_ticker, "KXELONMARS-99")
+        self.assertEqual(resolved_event.summary()["series_ticker"], "KXELONMARS")
+
     def test_load_replay_dataset_summarizes_sources(self):
         dataset = ResearchSession().load_replay_dataset(
             market_data_source=[ticker_event(), ticker_event(market_ticker="OTHER-26")],
@@ -125,6 +158,41 @@ class ResearchWorkflowTests(unittest.TestCase):
 
         self.assertEqual(search_results[0].market_ticker, "HIGHMIA-20260315-B85")
         self.assertEqual(resolved.summary()["event_ticker"], "HIGHMIA-20260315")
+
+    def test_research_session_groups_market_universes_by_event(self):
+        payloads = [
+            {
+                "category": "Technology",
+                "series_ticker": "KXELONMARS",
+                "series_title": "Elon Musk on Mars",
+                "event_ticker": "KXELONMARS-99",
+                "event_title": "Will Elon Musk visit Mars in his lifetime?",
+                "event_subtitle": "Before 2099",
+                "market_ticker": "KXELONMARS-99-YES",
+                "market_title": "Yes before 2099",
+                "market_subtitle": "Before 2099",
+                "status": "open",
+            },
+            {
+                "category": "Technology",
+                "series_ticker": "KXELONMARS",
+                "series_title": "Elon Musk on Mars",
+                "event_ticker": "KXELONMARS-99",
+                "event_title": "Will Elon Musk visit Mars in his lifetime?",
+                "event_subtitle": "Before 2099",
+                "market_ticker": "KXELONMARS-99-NO",
+                "market_title": "No before 2099",
+                "market_subtitle": "Before 2099",
+                "status": "open",
+            },
+        ]
+
+        with patch("mykalshi.research.workflows.discovery.search_markets", return_value=payloads):
+            universes = ResearchSession().search_market_universes(query="elon mars")
+
+        self.assertEqual(len(universes), 1)
+        self.assertEqual(universes[0].event_ticker, "KXELONMARS-99")
+        self.assertEqual([market.market_ticker for market in universes[0].markets], ["KXELONMARS-99-YES", "KXELONMARS-99-NO"])
 
     def test_research_session_runs_replay_backtest_end_to_end(self):
         result = ResearchSession().run_replay_backtest(

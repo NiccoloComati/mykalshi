@@ -78,6 +78,13 @@ matches = session.search_markets(series_ticker="KXELONMARS", status="open", limi
 print(matches[0].market_ticker)
 ```
 
+The same session layer now supports broader query-style discovery:
+
+```python
+universes = session.search_market_universes(query="mars", status="open", limit=3)
+print(universes[0].summary())
+```
+
 ```python
 from mykalshi import historical
 

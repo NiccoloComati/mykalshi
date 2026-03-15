@@ -65,6 +65,14 @@ matches = session.search_markets(series_ticker="HIGHMIA", status="open", limit=3
 print(matches[0].summary())
 ```
 
+You can also use one generic query across series, event, and market context:
+
+```python
+session = ResearchSession()
+matches = session.search_markets(query="elon mars", status="open", limit=5)
+print(matches[0].summary())
+```
+
 ### By series
 
 ```python
@@ -137,6 +145,23 @@ match = session.resolve_market(
     market_ticker_contains="KXELONMARS-99",
 )
 print(match.market_ticker)
+```
+
+There are now matching helpers for higher-level discovery objects too:
+
+```python
+series_match = session.resolve_series(query="elon mars")
+event_match = session.resolve_event(query="elon mars 2099")
+print(series_match.summary())
+print(event_match.summary())
+```
+
+And if you want grouped browsing by event instead of a flat market list:
+
+```python
+universes = session.search_market_universes(query="mars", status="open", limit=5)
+print(universes[0].summary())
+print([market.market_ticker for market in universes[0].markets])
 ```
 
 ## 4. Live Market Data

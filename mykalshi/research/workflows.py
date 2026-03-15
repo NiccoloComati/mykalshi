@@ -74,6 +74,89 @@ class DiscoveredMarket:
         }
 
 
+@dataclass(frozen=True)
+class DiscoveredSeries:
+    ticker: str
+    title: str | None
+    category: str | None
+    tags: tuple[str, ...] = ()
+    raw: dict[str, Any] | None = None
+
+    @classmethod
+    def from_discovery_result(cls, payload: dict[str, Any]) -> "DiscoveredSeries":
+        return cls(
+            ticker=str(payload.get("ticker") or ""),
+            title=payload.get("title"),
+            category=payload.get("category"),
+            tags=tuple(str(tag) for tag in payload.get("tags", []) if tag is not None),
+            raw=payload,
+        )
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "ticker": self.ticker,
+            "title": self.title,
+            "category": self.category,
+            "tags": list(self.tags),
+        }
+
+
+@dataclass(frozen=True)
+class DiscoveredEvent:
+    event_ticker: str
+    series_ticker: str | None
+    title: str | None
+    subtitle: str | None
+    category: str | None
+    status: str | None
+    raw: dict[str, Any] | None = None
+
+    @classmethod
+    def from_discovery_result(cls, payload: dict[str, Any]) -> "DiscoveredEvent":
+        return cls(
+            event_ticker=str(payload.get("event_ticker") or ""),
+            series_ticker=payload.get("series_ticker"),
+            title=payload.get("title"),
+            subtitle=payload.get("sub_title"),
+            category=payload.get("category"),
+            status=payload.get("status"),
+            raw=payload,
+        )
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "event_ticker": self.event_ticker,
+            "series_ticker": self.series_ticker,
+            "title": self.title,
+            "subtitle": self.subtitle,
+            "category": self.category,
+            "status": self.status,
+        }
+
+
+@dataclass
+class MarketUniverse:
+    category: str | None
+    series_ticker: str | None
+    series_title: str | None
+    event_ticker: str | None
+    event_title: str | None
+    event_subtitle: str | None
+    markets: list[DiscoveredMarket] = field(default_factory=list)
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "category": self.category,
+            "series_ticker": self.series_ticker,
+            "series_title": self.series_title,
+            "event_ticker": self.event_ticker,
+            "event_title": self.event_title,
+            "event_subtitle": self.event_subtitle,
+            "market_count": len(self.markets),
+            "market_tickers": [market.market_ticker for market in self.markets],
+        }
+
+
 @dataclass
 class ReplayDataset:
     market_ticker: str | None
@@ -195,11 +278,42 @@ class ResearchSession:
         self._replay_backtester_factory = replay_backtester_factory or ReplayBacktester
         self._trade_backtester_factory = trade_backtester_factory or TradeBacktester
 
+    def search_series(self, **filters: Any) -> list[DiscoveredSeries]:
+        return [DiscoveredSeries.from_discovery_result(item) for item in discovery.search_series(**filters)]
+
+    def resolve_series(self, **filters: Any) -> DiscoveredSeries:
+        return DiscoveredSeries.from_discovery_result(discovery.resolve_series(**filters))
+
+    def search_events(self, **filters: Any) -> list[DiscoveredEvent]:
+        return [DiscoveredEvent.from_discovery_result(item) for item in discovery.search_events(**filters)]
+
+    def resolve_event(self, **filters: Any) -> DiscoveredEvent:
+        return DiscoveredEvent.from_discovery_result(discovery.resolve_event(**filters))
+
     def search_markets(self, **filters: Any) -> list[DiscoveredMarket]:
         return [DiscoveredMarket.from_discovery_result(item) for item in discovery.search_markets(**filters)]
 
     def resolve_market(self, **filters: Any) -> DiscoveredMarket:
         return DiscoveredMarket.from_discovery_result(discovery.resolve_market(**filters))
+
+    def search_market_universes(self, **filters: Any) -> list[MarketUniverse]:
+        grouped: dict[tuple[str | None, str | None], MarketUniverse] = {}
+        for match in self.search_markets(**filters):
+            key = (match.event_ticker, match.series_ticker)
+            universe = grouped.get(key)
+            if universe is None:
+                universe = MarketUniverse(
+                    category=match.category,
+                    series_ticker=match.series_ticker,
+                    series_title=match.series_title,
+                    event_ticker=match.event_ticker,
+                    event_title=match.event_title,
+                    event_subtitle=match.event_subtitle,
+                    markets=[],
+                )
+                grouped[key] = universe
+            universe.markets.append(match)
+        return list(grouped.values())
 
     def load_replay_dataset(
         self,
