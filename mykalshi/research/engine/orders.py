@@ -22,12 +22,17 @@ class SimulatedOrder:
     updated_at: str
     limit_price_cents: int | None = None
     slippage_cents: int = 0
-    status: str = "accepted"
+    status: str = "pending"
     filled_quantity: Decimal = field(default_factory=lambda: Decimal("0.00"))
     average_fill_price_cents: Decimal | None = None
     reason: str | None = None
     tag: str | None = None
     note: str | None = None
+    reserved_cash_cents: Decimal = Decimal("0.00")
+    reserved_yes_quantity: Decimal = Decimal("0.00")
+    reserved_no_quantity: Decimal = Decimal("0.00")
+    reservation_cash_per_contract_cents: Decimal = Decimal("0.00")
+    replacement_for_order_id: str | None = None
 
     @property
     def is_open(self) -> bool:
@@ -61,9 +66,12 @@ class OrderManager:
             reason=order.reason,
             tag=order.tag,
             note=order.note,
+            reserved_cash_cents=order.reserved_cash_cents,
+            reserved_yes_quantity=order.reserved_yes_quantity,
+            reserved_no_quantity=order.reserved_no_quantity,
         )
 
-    def submit(self, request: OrderRequest) -> OrderEvent:
+    def create(self, request: OrderRequest) -> SimulatedOrder:
         action = normalize_action(request.action)
         quantity = quantize_count(request.quantity)
         order_id = f"sim-{self._next_id}"
@@ -82,25 +90,37 @@ class OrderManager:
             slippage_cents=int(request.slippage_cents or 0),
             tag=request.tag,
             note=request.note,
+            replacement_for_order_id=getattr(request, "replacement_for_order_id", None),
         )
-
-        if quantity <= 0:
-            order.status = "rejected"
-            order.remaining_quantity = Decimal("0.00")
-            order.reason = "Order quantity must be positive"
-        elif request.limit_price_cents is not None and not 0 <= int(request.limit_price_cents) <= 100:
-            order.status = "rejected"
-            order.remaining_quantity = Decimal("0.00")
-            order.reason = "Limit price must be between 0 and 100 cents"
-        elif request.order_type not in {"market", "limit"}:
-            order.status = "rejected"
-            order.remaining_quantity = Decimal("0.00")
-            order.reason = f"Unsupported order type: {request.order_type!r}"
-
         self._orders[order_id] = order
+        return order
+
+    def reject(self, order_id: str, *, timestamp: str, reason: str) -> OrderEvent:
+        order = self._orders[order_id]
+        order.updated_at = timestamp
+        order.status = "rejected"
+        order.reason = reason
+        order.remaining_quantity = Decimal("0.00")
+        order.reserved_cash_cents = Decimal("0.00")
+        order.reserved_yes_quantity = Decimal("0.00")
+        order.reserved_no_quantity = Decimal("0.00")
+        order.reservation_cash_per_contract_cents = Decimal("0.00")
         return self._build_order_event(order)
 
-    def cancel(self, request: CancelRequest) -> OrderEvent:
+    def accept(self, order_id: str, *, timestamp: str) -> OrderEvent:
+        order = self._orders[order_id]
+        order.updated_at = timestamp
+        order.status = "accepted"
+        order.reason = None
+        return self._build_order_event(order)
+
+    def cancel(
+        self,
+        request: CancelRequest,
+        *,
+        reason: str | None = None,
+        status: str = "canceled",
+    ) -> OrderEvent:
         order = self._orders.get(request.order_id)
         if order is None:
             placeholder = SimulatedOrder(
@@ -119,13 +139,75 @@ class OrderManager:
 
         order.updated_at = request.timestamp
         if not order.is_open:
-            order.status = "rejected"
-            order.reason = "Order is not cancelable in its current state"
-            return self._build_order_event(order)
+            original_reason = order.reason
+            event = OrderEvent(
+                timestamp=request.timestamp,
+                event_type="order",
+                order_id=order.order_id,
+                market_ticker=order.market_ticker,
+                action=order.action,
+                status=order.status,
+                quantity=order.quantity,
+                remaining_quantity=order.remaining_quantity,
+                order_type=order.order_type,
+                limit_price_cents=order.limit_price_cents,
+                average_fill_price_cents=self._average_fill_price_cents(order),
+                reason="Order is not cancelable in its current state",
+                tag=order.tag,
+                note=order.note,
+                reserved_cash_cents=order.reserved_cash_cents,
+                reserved_yes_quantity=order.reserved_yes_quantity,
+                reserved_no_quantity=order.reserved_no_quantity,
+            )
+            order.reason = original_reason
+            return event
 
-        order.status = "canceled"
-        order.reason = None
+        order.status = status
+        order.reason = reason
+        order.reserved_cash_cents = Decimal("0.00")
+        order.reserved_yes_quantity = Decimal("0.00")
+        order.reserved_no_quantity = Decimal("0.00")
+        order.reservation_cash_per_contract_cents = Decimal("0.00")
         return self._build_order_event(order)
+
+    def cancel_open_orders_for_market(
+        self,
+        market_ticker: str,
+        *,
+        timestamp: str,
+        reason: str,
+        status: str = "canceled",
+    ) -> list[OrderEvent]:
+        events: list[OrderEvent] = []
+        for order in self.open_orders(market_ticker):
+            events.append(
+                self.cancel(
+                    CancelRequest(timestamp=timestamp, event_type="cancel_request", order_id=order.order_id),
+                    reason=reason,
+                    status=status,
+                )
+            )
+        return events
+
+    def cancel_open_market_orders(
+        self,
+        market_ticker: str,
+        *,
+        timestamp: str,
+        reason: str,
+    ) -> list[OrderEvent]:
+        events: list[OrderEvent] = []
+        for order in self.open_orders(market_ticker):
+            if order.order_type != "market":
+                continue
+            events.append(
+                self.cancel(
+                    CancelRequest(timestamp=timestamp, event_type="cancel_request", order_id=order.order_id),
+                    reason=reason,
+                    status="expired",
+                )
+            )
+        return events
 
     def record_fill(
         self,

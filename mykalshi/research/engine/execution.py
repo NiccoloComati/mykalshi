@@ -11,8 +11,10 @@ from .orders import SimulatedOrder
 
 @dataclass(frozen=True)
 class ExecutionDecision:
-    quantity: Decimal
-    price_cents: int
+    status: str
+    quantity: Decimal | None = None
+    price_cents: int | None = None
+    reason: str | None = None
 
 
 class FillModel(Protocol):
@@ -70,4 +72,4 @@ class KalshiBinaryFillModel:
         fill_quantity = min(order.remaining_quantity, quantity_available)
         if fill_quantity <= 0:
             return None
-        return ExecutionDecision(quantity=fill_quantity, price_cents=execution_price_cents)
+        return ExecutionDecision(status="filled", quantity=fill_quantity, price_cents=execution_price_cents)

@@ -64,13 +64,16 @@ Implemented now:
 - event logs
 - trade-driven and quote/book-driven replay entry points
 - order acceptance, cancellation, partial fills, and fill callbacks
+- cash and inventory reservation for resting orders
+- explicit cancel/replace semantics through deterministic request ordering
+- centralized settlement handling that cancels open orders, waits on missing payouts, and realizes binary payouts once data arrives
 - portfolio/accounting for Kalshi yes/no contracts
+- migration of the legacy `TradeBacktester` surface onto the event-driven engine
 
 Later work:
 
-- migrate the legacy `TradeBacktester` compatibility wrapper fully onto the new engine
 - queue-position and maker-style execution assumptions
-- cash/position reservation for resting orders
 - richer settlement sourcing from Kalshi metadata
 - market-family and multi-market portfolio analytics
 - performance reporting beyond the current summary metrics
+- more orderbook-aware execution models beyond the current immediate compatibility shim

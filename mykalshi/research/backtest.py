@@ -1,11 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections import deque
+from dataclasses import dataclass, field, replace
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from typing import Any, Callable, Iterable, Protocol, Sequence
 
 from .. import historical
 from ..fixed_point import dollars_to_cents, format_decimal, quantize_count
+from .engine import EventDrivenBacktestEngine, HistoricalTradeReplay, KalshiStrategy, StrategyContext, TradeMarketEvent
+from .engine.events import FillEvent as EngineFillEvent
+from .engine.events import MarkEvent as EngineMarkEvent
+from .engine.events import OrderEvent as EngineOrderEvent
+from .engine.execution import ExecutionDecision as EngineExecutionDecision
 
 
 CENT = Decimal("0.01")
@@ -360,6 +366,304 @@ class BacktestContext:
         return fill
 
 
+@dataclass
+class _QueuedSignalPlan:
+    signal: StrategySignal
+    remaining_trade_quantity: Decimal | None = None
+
+
+class _LegacyFillModel:
+    """Compatibility shim that preserves the old immediate trade semantics."""
+
+    def __init__(self, execution_model: ImmediateTradeExecutionModel) -> None:
+        self.execution_model = execution_model
+
+    @staticmethod
+    def _trade_payload(event: TradeMarketEvent) -> dict[str, Any]:
+        if isinstance(event.raw_data, dict):
+            return event.raw_data
+        return {
+            "created_time": event.timestamp,
+            "ticker": event.market_ticker,
+            "price": event.yes_price_cents,
+        }
+
+    def evaluate(self, order, market_event, market_state) -> EngineExecutionDecision | None:
+        if not isinstance(market_event, TradeMarketEvent):
+            return None
+        signal = TradeSignal(
+            action=order.action,
+            quantity=order.remaining_quantity,
+            limit_price_cents=order.limit_price_cents,
+            slippage_cents=order.slippage_cents,
+            tag=order.tag,
+            note=order.note,
+        )
+        trade = self._trade_payload(market_event)
+        decision = self.execution_model.evaluate(
+            signal,
+            trade,
+            yes_price_cents=market_event.yes_price_cents,
+            no_price_cents=market_event.no_price_cents,
+        )
+        if decision.status != "filled" or decision.execution_price_cents is None:
+            return EngineExecutionDecision(status="rejected", reason=decision.reason or "Order rejected by execution model")
+        return EngineExecutionDecision(
+            status="filled",
+            quantity=quantize_count(order.remaining_quantity),
+            price_cents=decision.execution_price_cents,
+        )
+
+
+class _LegacyFeeModelAdapter:
+    def __init__(self, fee_model: FeeModel | None) -> None:
+        self.fee_model = fee_model
+
+    def __call__(self, order, market_event, execution_price_cents: int, quantity: Decimal) -> Decimal:
+        if self.fee_model is None:
+            return Decimal("0.00")
+        if isinstance(market_event, TradeMarketEvent) and isinstance(market_event.raw_data, dict):
+            trade = market_event.raw_data
+            yes_price_cents = market_event.yes_price_cents
+            no_price_cents = market_event.no_price_cents
+        else:
+            trade = {
+                "created_time": market_event.timestamp,
+                "ticker": market_event.market_ticker,
+                "price": execution_price_cents,
+            }
+            yes_price_cents = execution_price_cents
+            no_price_cents = 100 - execution_price_cents
+
+        signal = TradeSignal(
+            action=order.action,
+            quantity=quantity,
+            limit_price_cents=order.limit_price_cents,
+            slippage_cents=order.slippage_cents,
+            tag=order.tag,
+            note=order.note,
+        )
+        return TradeBacktester._call_fee_model(
+            self.fee_model,
+            signal,
+            trade,
+            yes_price_cents,
+            no_price_cents,
+            execution_price_cents,
+        )
+
+
+class _CompatibilityStrategyAdapter(KalshiStrategy):
+    """Runs the legacy strategy API over the event-driven core.
+
+    The adapter serializes signal handling so the old wrapper semantics still hold:
+    one requested order resolves before the next compatibility order is submitted.
+    """
+
+    def __init__(
+        self,
+        backtester: "TradeBacktester",
+        strategy: StrategyProtocol | Callable[[BacktestContext, dict[str, Any]], StrategyResult],
+        legacy_context: BacktestContext,
+    ) -> None:
+        self.backtester = backtester
+        self.strategy = strategy
+        self.legacy_context = legacy_context
+        self._plan_queue: deque[_QueuedSignalPlan] = deque()
+        self._waiting_for_resolution = False
+        self._order_snapshots: dict[str, BacktestOrder] = {}
+        self._fees_by_order_id: dict[str, Decimal] = {}
+        self._primary_market_ticker = legacy_context.ticker
+
+    def _trade_payload(self, event: TradeMarketEvent) -> dict[str, Any]:
+        if isinstance(event.raw_data, dict):
+            return event.raw_data
+        return {
+            "created_time": event.timestamp,
+            "ticker": event.market_ticker,
+            "price": event.yes_price_cents,
+        }
+
+    def _sync_context(self, context: StrategyContext, market_ticker: str | None = None) -> None:
+        self.legacy_context.cash_cents = context.portfolio.cash_cents
+        ticker = market_ticker or self._primary_market_ticker
+        if ticker is None and context.current_event is not None:
+            ticker = context.current_event.market_ticker
+        if ticker is None:
+            return
+        position = context.position(ticker)
+        self._primary_market_ticker = ticker
+        self.legacy_context.ticker = self.legacy_context.ticker or ticker
+        self.legacy_context.yes_position = position.yes_quantity
+        self.legacy_context.no_position = position.no_quantity
+        self.legacy_context.orders = list(self._order_snapshots.values())
+
+    def _submit_trade_signal(self, context: StrategyContext, market_ticker: str, signal: TradeSignal) -> None:
+        context.submit_order(
+            market_ticker,
+            action=signal.action,
+            quantity=signal.quantity,
+            limit_price_cents=signal.limit_price_cents,
+            slippage_cents=signal.slippage_cents,
+            tag=signal.tag,
+            note=signal.note,
+        )
+        self._waiting_for_resolution = True
+
+    def _advance_signal_queue(self, context: StrategyContext) -> None:
+        if self._waiting_for_resolution or context.current_event is None:
+            return
+
+        while self._plan_queue:
+            plan = self._plan_queue[0]
+            current_event = context.current_event
+            if isinstance(plan.signal, TradeSignal):
+                self._submit_trade_signal(context, current_event.market_ticker, plan.signal)
+                return
+
+            next_signal = self.backtester._next_trade_signal_for_target(
+                plan.signal,
+                self.legacy_context,
+                plan.remaining_trade_quantity,
+            )
+            if next_signal is None:
+                self._plan_queue.popleft()
+                continue
+
+            self._submit_trade_signal(context, current_event.market_ticker, next_signal)
+            return
+
+    def _resolve_after_non_fill(self, context: StrategyContext) -> None:
+        if self._plan_queue:
+            self._plan_queue.popleft()
+        self._waiting_for_resolution = False
+        self._advance_signal_queue(context)
+
+    def _resolve_after_fill(self, context: StrategyContext, event: EngineFillEvent) -> None:
+        if self._plan_queue:
+            plan = self._plan_queue[0]
+            if isinstance(plan.signal, PositionTargetSignal) and plan.remaining_trade_quantity is not None:
+                plan.remaining_trade_quantity = quantize_count(plan.remaining_trade_quantity - event.quantity)
+
+            if isinstance(plan.signal, TradeSignal):
+                self._plan_queue.popleft()
+            else:
+                next_signal = self.backtester._next_trade_signal_for_target(
+                    plan.signal,
+                    self.legacy_context,
+                    plan.remaining_trade_quantity,
+                )
+                if next_signal is None:
+                    self._plan_queue.popleft()
+
+        self._waiting_for_resolution = False
+        self._advance_signal_queue(context)
+
+    def _record_order_snapshot(self, event: EngineOrderEvent) -> None:
+        reason = event.reason
+        if reason == "Insufficient available cash to reserve order":
+            reason = "Insufficient cash to reserve order"
+        elif reason == "Insufficient available yes inventory to reserve order":
+            reason = "Cannot sell more yes contracts than are held"
+        elif reason == "Insufficient available no inventory to reserve order":
+            reason = "Cannot sell more no contracts than are held"
+        order = BacktestOrder(
+            timestamp=event.timestamp,
+            action=event.action,
+            quantity=event.quantity,
+            requested_limit_price_cents=event.limit_price_cents,
+            execution_price_cents=event.average_fill_price_cents,
+            status=event.status,
+            fee_cents=self._fees_by_order_id.get(event.order_id, Decimal("0.00")).quantize(CENT),
+            reason=reason,
+            tag=event.tag,
+            note=event.note,
+        )
+        self._order_snapshots[event.order_id] = order
+        self.legacy_context.orders = list(self._order_snapshots.values())
+
+    def on_start(self, context: StrategyContext) -> None:
+        self._sync_context(context)
+        self.backtester._call_optional_hook(self.strategy, "on_start", self.legacy_context)
+
+    def on_trade(self, context: StrategyContext, event: TradeMarketEvent) -> None:
+        self._sync_context(context, event.market_ticker)
+        signals = self.backtester._normalize_strategy_signals(
+            self.backtester._call_strategy(self.strategy, self.legacy_context, self._trade_payload(event))
+        )
+        for signal in signals:
+            if isinstance(signal, PositionTargetSignal):
+                remaining_trade_quantity = (
+                    quantize_count(signal.max_trade_quantity) if signal.max_trade_quantity is not None else None
+                )
+                if remaining_trade_quantity is not None and remaining_trade_quantity <= 0:
+                    raise ValueError("PositionTargetSignal.max_trade_quantity must be positive when provided")
+                self._plan_queue.append(
+                    _QueuedSignalPlan(signal=signal, remaining_trade_quantity=remaining_trade_quantity)
+                )
+                continue
+            self._plan_queue.append(_QueuedSignalPlan(signal=signal))
+
+        self._advance_signal_queue(context)
+
+    def on_order(self, context: StrategyContext, event: EngineOrderEvent) -> None:
+        self._sync_context(context, event.market_ticker or self._primary_market_ticker)
+        self._record_order_snapshot(event)
+        if event.status in {"rejected", "canceled", "expired"}:
+            self._resolve_after_non_fill(context)
+
+    def on_fill(self, context: StrategyContext, event: EngineFillEvent) -> None:
+        self._fees_by_order_id[event.order_id] = (
+            self._fees_by_order_id.get(event.order_id, Decimal("0.00")) + event.fee_cents
+        ).quantize(CENT)
+        if event.order_id in self._order_snapshots:
+            self._order_snapshots[event.order_id] = replace(
+                self._order_snapshots[event.order_id],
+                fee_cents=self._fees_by_order_id[event.order_id],
+            )
+            self.legacy_context.orders = list(self._order_snapshots.values())
+
+        self.legacy_context.cash_cents = event.cash_after_cents or self.legacy_context.cash_cents
+        self.legacy_context.yes_position = event.yes_position or Decimal("0.00")
+        self.legacy_context.no_position = event.no_position or Decimal("0.00")
+        self.legacy_context.fills.append(
+            BacktestFill(
+                timestamp=event.timestamp,
+                action=event.action,
+                quantity=event.quantity,
+                price_cents=event.price_cents,
+                fee_cents=event.fee_cents,
+                cash_after_cents=event.cash_after_cents or self.legacy_context.cash_cents,
+                yes_position=event.yes_position or Decimal("0.00"),
+                no_position=event.no_position or Decimal("0.00"),
+                tag=event.tag,
+                note=event.note,
+            )
+        )
+        self._resolve_after_fill(context, event)
+
+    def on_mark(self, context: StrategyContext, event: EngineMarkEvent) -> None:
+        self._sync_context(context, event.market_ticker)
+        if event.yes_price_cents is None or event.no_price_cents is None:
+            return
+        self.legacy_context.marks.append(
+            BacktestMark(
+                timestamp=event.timestamp,
+                yes_price_cents=event.yes_price_cents,
+                no_price_cents=event.no_price_cents,
+                cash_cents=event.cash_cents,
+                yes_position=self.legacy_context.yes_position,
+                no_position=self.legacy_context.no_position,
+                equity_cents=event.total_equity_cents,
+            )
+        )
+
+    def on_finish(self, context: StrategyContext) -> None:
+        self._sync_context(context)
+        self.legacy_context.orders = list(self._order_snapshots.values())
+        self.backtester._call_optional_hook(self.strategy, "on_finish", self.legacy_context)
+
+
 class TradeBacktester:
     def __init__(
         self,
@@ -527,122 +831,15 @@ class TradeBacktester:
         except TypeError:
             return _cash(fee_model(signal, trade, yes_price_cents, no_price_cents))
 
-    def _process_trade_signal(
-        self,
-        context: BacktestContext,
-        trade: dict[str, Any],
-        signal: TradeSignal,
-        *,
-        yes_price_cents: int,
-        no_price_cents: int,
-    ) -> BacktestOrder:
-        timestamp = str(trade.get("created_time") or trade.get("ts") or "")
-        quantity = quantize_count(signal.quantity)
-        if quantity <= 0:
-            raise ValueError("TradeSignal.quantity must be positive")
-
-        decision = self.execution_model.evaluate(
-            signal,
-            trade,
-            yes_price_cents=yes_price_cents,
-            no_price_cents=no_price_cents,
-        )
-        if decision.status != "filled" or decision.execution_price_cents is None:
-            order = BacktestOrder(
-                timestamp=timestamp,
-                action=signal.action.lower(),
-                quantity=quantity,
-                requested_limit_price_cents=signal.limit_price_cents,
-                execution_price_cents=None,
-                status=decision.status,
-                reason=decision.reason,
-                tag=signal.tag,
-                note=signal.note,
-            )
-            context.orders.append(order)
-            return order
-
-        fee_cents = self._call_fee_model(
-            self.fee_model,
-            signal,
-            trade,
-            yes_price_cents,
-            no_price_cents,
-            decision.execution_price_cents,
-        )
-        try:
-            context.execute(
-                signal,
-                trade,
-                execution_price_cents=decision.execution_price_cents,
-                fee_cents=fee_cents,
-            )
-        except ValueError as exc:
-            order = BacktestOrder(
-                timestamp=timestamp,
-                action=signal.action.lower(),
-                quantity=quantity,
-                requested_limit_price_cents=signal.limit_price_cents,
-                execution_price_cents=decision.execution_price_cents,
-                status="rejected",
-                reason=str(exc),
-                tag=signal.tag,
-                note=signal.note,
-            )
-            context.orders.append(order)
-            return order
-
-        order = BacktestOrder(
-            timestamp=timestamp,
-            action=signal.action.lower(),
-            quantity=quantity,
-            requested_limit_price_cents=signal.limit_price_cents,
-            execution_price_cents=decision.execution_price_cents,
-            status=decision.status,
-            fee_cents=fee_cents,
-            reason=decision.reason,
-            tag=signal.tag,
-            note=signal.note,
-        )
-        context.orders.append(order)
-        return order
-
-    def _process_position_target_signal(
-        self,
-        context: BacktestContext,
-        trade: dict[str, Any],
-        signal: PositionTargetSignal,
-        *,
-        yes_price_cents: int,
-        no_price_cents: int,
-    ) -> None:
-        remaining_trade_quantity = (
-            quantize_count(signal.max_trade_quantity) if signal.max_trade_quantity is not None else None
-        )
-        if remaining_trade_quantity is not None and remaining_trade_quantity <= 0:
-            raise ValueError("PositionTargetSignal.max_trade_quantity must be positive when provided")
-
-        while True:
-            next_signal = self._next_trade_signal_for_target(signal, context, remaining_trade_quantity)
-            if next_signal is None:
-                return
-
-            order = self._process_trade_signal(
-                context,
-                trade,
-                next_signal,
-                yes_price_cents=yes_price_cents,
-                no_price_cents=no_price_cents,
-            )
-            if order.status != "filled":
-                return
-
-            if remaining_trade_quantity is None:
-                continue
-
-            remaining_trade_quantity = quantize_count(remaining_trade_quantity - quantize_count(next_signal.quantity))
-            if remaining_trade_quantity <= 0:
-                return
+    @staticmethod
+    def _resolve_market_ticker(ticker: str | None, ordered_trades: list[dict[str, Any]]) -> str | None:
+        if ticker:
+            return ticker
+        for trade in ordered_trades:
+            market_ticker = trade.get("ticker") or trade.get("market_ticker")
+            if market_ticker:
+                return str(market_ticker)
+        return None
 
     def run(
         self,
@@ -655,58 +852,64 @@ class TradeBacktester:
         initial_no_position: int | float | str | Decimal = 0,
     ) -> BacktestResult:
         ordered_trades = sorted(trades, key=_trade_sort_key)
-        context = BacktestContext(
-            ticker=ticker,
+        resolved_market_ticker = self._resolve_market_ticker(ticker, ordered_trades)
+        replay_trades: list[dict[str, Any]] = []
+        for trade in ordered_trades:
+            if resolved_market_ticker is not None and trade.get("ticker") is None and trade.get("market_ticker") is None:
+                normalized_trade = dict(trade)
+                normalized_trade["ticker"] = resolved_market_ticker
+                replay_trades.append(normalized_trade)
+            else:
+                replay_trades.append(trade)
+        yes_position = quantize_count(initial_yes_position)
+        no_position = quantize_count(initial_no_position)
+        if resolved_market_ticker is None and (yes_position > 0 or no_position > 0):
+            raise ValueError("ticker is required when initial positions are provided")
+
+        legacy_context = BacktestContext(
+            ticker=ticker or resolved_market_ticker,
             cash_cents=_cash(initial_cash_cents),
-            yes_position=quantize_count(initial_yes_position),
-            no_position=quantize_count(initial_no_position),
+            yes_position=yes_position,
+            no_position=no_position,
+        )
+        adapter = _CompatibilityStrategyAdapter(self, strategy, legacy_context)
+        engine = EventDrivenBacktestEngine(
+            fill_model=_LegacyFillModel(self.execution_model),
+            fee_model=_LegacyFeeModelAdapter(self.fee_model),
         )
 
-        self._call_optional_hook(strategy, "on_start", context)
-        last_mark: BacktestMark | None = None
-        for trade in ordered_trades:
-            yes_price_cents, no_price_cents = _extract_trade_prices(trade)
-            signals = self._normalize_strategy_signals(self._call_strategy(strategy, context, trade))
-            for signal in signals:
-                if isinstance(signal, PositionTargetSignal):
-                    self._process_position_target_signal(
-                        context,
-                        trade,
-                        signal,
-                        yes_price_cents=yes_price_cents,
-                        no_price_cents=no_price_cents,
-                    )
-                    continue
+        initial_positions: dict[str, dict[str, Decimal]] | None = None
+        if resolved_market_ticker is not None and (yes_position > 0 or no_position > 0):
+            initial_positions = {
+                resolved_market_ticker: {
+                    "yes_quantity": yes_position,
+                    "no_quantity": no_position,
+                    "yes_average_cost_cents": Decimal("0.00"),
+                    "no_average_cost_cents": Decimal("0.00"),
+                }
+            }
 
-                self._process_trade_signal(
-                    context,
-                    trade,
-                    signal,
-                    yes_price_cents=yes_price_cents,
-                    no_price_cents=no_price_cents,
-                )
-            last_mark = context.mark(
-                str(trade.get("created_time") or trade.get("ts") or ""),
-                yes_price_cents,
-                no_price_cents,
-            )
+        run_result = engine.run(
+            HistoricalTradeReplay.from_trade_dicts(replay_trades),
+            adapter,
+            initial_cash_cents=initial_cash_cents,
+            initial_positions=initial_positions,
+        )
 
-        self._call_optional_hook(strategy, "on_finish", context)
-        final_equity = last_mark.equity_cents if last_mark is not None else context.cash_cents
-        total_fees_cents = sum((fill.fee_cents for fill in context.fills), Decimal("0.00")).quantize(CENT)
+        total_fees_cents = sum((fill.fee_cents for fill in legacy_context.fills), Decimal("0.00")).quantize(CENT)
         return BacktestResult(
-            ticker=ticker,
+            ticker=ticker or resolved_market_ticker,
             initial_cash_cents=_cash(initial_cash_cents),
-            final_cash_cents=context.cash_cents,
-            final_equity_cents=final_equity,
+            final_cash_cents=legacy_context.cash_cents,
+            final_equity_cents=run_result.final_equity_cents,
             total_fees_cents=total_fees_cents,
-            net_profit_cents=(final_equity - _cash(initial_cash_cents)).quantize(CENT),
-            max_drawdown_cents=_calculate_max_drawdown(context.marks),
-            yes_position=context.yes_position,
-            no_position=context.no_position,
-            orders=list(context.orders),
-            fills=list(context.fills),
-            marks=list(context.marks),
+            net_profit_cents=(run_result.final_equity_cents - _cash(initial_cash_cents)).quantize(CENT),
+            max_drawdown_cents=_calculate_max_drawdown(legacy_context.marks),
+            yes_position=legacy_context.yes_position,
+            no_position=legacy_context.no_position,
+            orders=list(legacy_context.orders),
+            fills=list(legacy_context.fills),
+            marks=list(legacy_context.marks),
         )
 
     def run_on_historical_trades(

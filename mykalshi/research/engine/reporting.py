@@ -6,7 +6,7 @@ from typing import Any
 
 from ...fixed_point import format_decimal
 from .events import EngineEvent, FillEvent, MarkEvent, OrderEvent
-from .orders import OrderManager
+from .orders import OrderManager, SimulatedOrder
 from .portfolio import PortfolioState
 
 
@@ -32,6 +32,7 @@ class BacktestRunResult:
     marks: list[MarkEvent]
     logs: list[dict[str, str]]
     event_log: list[EngineEvent]
+    final_orders: list[SimulatedOrder]
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -42,6 +43,7 @@ class BacktestRunResult:
             "realized_pnl_cents": format_decimal(self.realized_pnl_cents),
             "max_drawdown_cents": format_decimal(self.max_drawdown_cents),
             "order_event_count": len(self.order_events),
+            "final_order_count": len(self.final_orders),
             "fill_count": len(self.fills),
             "mark_count": len(self.marks),
             "log_count": len(self.logs),
@@ -72,7 +74,6 @@ class PerformanceTracker:
         self.event_log.append(event)
 
     def build_result(self, portfolio: PortfolioState, order_manager: OrderManager) -> BacktestRunResult:
-        del order_manager
         return BacktestRunResult(
             initial_cash_cents=portfolio.initial_cash_cents,
             final_cash_cents=portfolio.cash_cents,
@@ -85,4 +86,5 @@ class PerformanceTracker:
             marks=list(self.marks),
             logs=list(self.logs),
             event_log=list(self.event_log),
+            final_orders=order_manager.all_orders(),
         )

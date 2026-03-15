@@ -24,7 +24,7 @@ Turn `mykalshi` into a clean research and trading toolkit for Kalshi with four s
 - `mykalshi/recorder.py`: reusable polling-based order book recorder
 - `mykalshi/research/websocket.py`: authenticated websocket capture for order book snapshots and deltas
 - `mykalshi/research/storage.py`: SQLite and Parquet sinks for captured order book events
-- `mykalshi/research/backtest.py`: historical-trade backtest engine with target-position support
+- `mykalshi/research/backtest.py`: legacy-compatible backtest facade now routed through the event-driven engine
 - `mykalshi/research/strategies.py`: reusable threshold and probability-edge strategies
 - `mykalshi/research/engine/`: modular event-driven backtest engine components
 - `mykalshi/research/datasets.py`: load and replay helpers for stored order book datasets
@@ -65,6 +65,7 @@ The foundation layer has been exercised in the local `.venv` on 2026-03-15.
 - live event-driven engine dry runs passed for:
   - archived trade replay through `HistoricalTradeReplay`
   - live ticker replay through `MarketDataReplay`
+- live historical wrapper dry run passed through `TradeBacktester.run_on_historical_trades(...)` after the compatibility migration
 
 ## Safety Note
 
@@ -72,9 +73,12 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 
 ## Next Implementation Slices
 
-1. Migrate `TradeBacktester` compatibility flows onto the new event-driven engine.
-2. Add cash and inventory reservation plus richer cancel/replace handling.
-3. Improve queue-position and orderbook-based execution realism.
+1. Improve execution realism beyond the current immediate compatibility model:
+   - queue-style logic
+   - orderbook-aware fill assumptions
+   - maker/taker-style behavior
+2. Add richer settlement sourcing and expiration metadata from Kalshi market state when replay data is incomplete.
+3. Expand performance and portfolio analytics on top of the unified engine path.
 
 ## Recent Usability Notes
 
@@ -87,6 +91,8 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - `research.backtest` now also supports target-position signals, staged transitions, and rejection-on-risk instead of aborting the run.
 - `research.strategies` is now the preferred place for reusable signal-to-position logic.
 - `research.engine` is now the new backtest foundation for deterministic event-driven replay.
+- `research.backtest` now routes through `research.engine` instead of maintaining a separate procedural simulator.
+- the event-driven engine now has cash and inventory reservation, explicit cancel/replace state transitions, and a centralized settlement pipeline.
 - `research.capture_market_data_sync(...)` is now the preferred entry point for live ticker/trade websocket collection.
 - `routing.get_trades_auto(...)` is now the preferred entry point when code should not need to manually split live and archived trade sources.
 

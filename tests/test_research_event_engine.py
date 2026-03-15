@@ -3,6 +3,58 @@ from __future__ import annotations
 import unittest
 
 from mykalshi.research import EventDrivenBacktestEngine, HistoricalTradeReplay, KalshiStrategy, MarketDataReplay
+from mykalshi.research.engine import OrderbookMarketEvent, SettlementEvent, TradeMarketEvent
+
+
+def trade_event(
+    timestamp: str,
+    *,
+    market_ticker: str = "FED-23DEC-T3.00",
+    yes_price_cents: int,
+    no_price_cents: int | None = None,
+    trade_quantity: str = "1.00",
+):
+    return TradeMarketEvent(
+        timestamp=timestamp,
+        event_type="trade",
+        market_ticker=market_ticker,
+        yes_price_cents=yes_price_cents,
+        no_price_cents=100 - yes_price_cents if no_price_cents is None else no_price_cents,
+        trade_quantity=trade_quantity,
+        raw_data={
+            "created_time": timestamp,
+            "ticker": market_ticker,
+            "yes_price_dollars": f"{yes_price_cents / 100:.4f}",
+            "no_price_dollars": f"{(100 - yes_price_cents) / 100:.4f}",
+            "count_fp": trade_quantity,
+        },
+    )
+
+
+def book_event(
+    timestamp: str,
+    *,
+    market_ticker: str = "FED-23DEC-T3.00",
+    yes_bid: int | None = None,
+    yes_ask: int | None = None,
+    no_bid: int | None = None,
+    no_ask: int | None = None,
+    yes_size: str = "2.00",
+    no_size: str = "2.00",
+):
+    yes_levels = [(yes_bid, yes_size)] if yes_bid is not None else ()
+    no_levels = [(no_bid, no_size)] if no_bid is not None else ()
+    return OrderbookMarketEvent(
+        timestamp=timestamp,
+        event_type="orderbook_snapshot",
+        market_ticker=market_ticker,
+        best_yes_bid_cents=yes_bid,
+        best_yes_ask_cents=yes_ask,
+        best_no_bid_cents=no_bid,
+        best_no_ask_cents=no_ask,
+        yes_levels=yes_levels,
+        no_levels=no_levels,
+    )
 
 
 class BuyLowSellHighStrategy(KalshiStrategy):
@@ -39,6 +91,142 @@ class CancelRestingOrderStrategy(KalshiStrategy):
             self.canceled = True
 
 
+class ReservationConflictStrategy(KalshiStrategy):
+    def on_orderbook(self, context, event):
+        if context.open_orders(event.market_ticker):
+            return
+        context.buy_yes(event.market_ticker, quantity=2, limit_price_cents=40, tag="first")
+        context.buy_yes(event.market_ticker, quantity=2, limit_price_cents=40, tag="second")
+
+
+class InventoryConflictStrategy(KalshiStrategy):
+    def __init__(self) -> None:
+        self.stage = 0
+
+    def on_trade(self, context, event):
+        if self.stage == 0:
+            context.buy_yes(event.market_ticker, quantity=2)
+            self.stage = 1
+
+    def on_orderbook(self, context, event):
+        if self.stage != 1:
+            return
+        if context.open_orders(event.market_ticker):
+            return
+        context.sell_yes(event.market_ticker, quantity=2, limit_price_cents=60, tag="first")
+        context.sell_yes(event.market_ticker, quantity=2, limit_price_cents=60, tag="second")
+        self.stage = 2
+
+
+class CancelReplaceStrategy(KalshiStrategy):
+    def __init__(self, *, submit_before_cancel: bool = False) -> None:
+        self.submit_before_cancel = submit_before_cancel
+        self.submitted = False
+
+    def on_orderbook(self, context, event):
+        open_orders = context.open_orders(event.market_ticker)
+        if not self.submitted:
+            context.buy_yes(event.market_ticker, quantity=1, limit_price_cents=40, tag="original")
+            self.submitted = True
+            return
+        if not open_orders:
+            return
+        original_order_id = open_orders[0].order_id
+        if self.submit_before_cancel:
+            context.buy_yes(event.market_ticker, quantity=1, limit_price_cents=39, tag="replacement")
+            context.cancel(original_order_id)
+        else:
+            context.cancel(original_order_id)
+            context.buy_yes(event.market_ticker, quantity=1, limit_price_cents=39, tag="replacement")
+
+
+class PartialFillThenCancelStrategy(KalshiStrategy):
+    def __init__(self) -> None:
+        self.submitted = False
+        self.canceled = False
+
+    def on_trade(self, context, event):
+        if not self.submitted:
+            context.buy_yes(event.market_ticker, quantity=2, limit_price_cents=50)
+            self.submitted = True
+            return
+        if self.submitted and not self.canceled:
+            open_orders = context.open_orders(event.market_ticker)
+            if open_orders:
+                context.cancel(open_orders[0].order_id)
+                self.canceled = True
+
+
+class CancelAfterFillStrategy(KalshiStrategy):
+    def __init__(self) -> None:
+        self.filled_order_id = None
+
+    def on_trade(self, context, event):
+        if self.filled_order_id is None and not context.open_orders(event.market_ticker):
+            context.buy_yes(event.market_ticker, quantity=1)
+
+    def on_fill(self, context, event):
+        self.filled_order_id = event.order_id
+        context.cancel(event.order_id)
+
+
+class LaterCashInsufficientStrategy(KalshiStrategy):
+    def __init__(self) -> None:
+        self.stage = 0
+
+    def on_trade(self, context, event):
+        if self.stage == 0:
+            context.buy_yes(event.market_ticker, quantity=1)
+            self.stage = 1
+            return
+        if self.stage == 1:
+            context.buy_no(event.market_ticker, quantity=1, limit_price_cents=50)
+            self.stage = 2
+
+
+class YesNoAccountingStrategy(KalshiStrategy):
+    def __init__(self) -> None:
+        self.stage = 0
+
+    def on_trade(self, context, event):
+        if self.stage == 0:
+            context.buy_yes(event.market_ticker, quantity=1)
+            self.stage = 1
+        elif self.stage == 1:
+            context.buy_no(event.market_ticker, quantity=1)
+            self.stage = 2
+
+
+class SettlementStrategy(KalshiStrategy):
+    def __init__(self) -> None:
+        self.stage = 0
+
+    def on_trade(self, context, event):
+        if self.stage == 0:
+            context.buy_yes(event.market_ticker, quantity=2)
+            self.stage = 1
+
+    def on_orderbook(self, context, event):
+        if self.stage != 1 or context.open_orders(event.market_ticker):
+            return
+        context.sell_yes(event.market_ticker, quantity=1, limit_price_cents=70)
+        self.stage = 2
+
+
+class MultipleMarketFamilyStrategy(KalshiStrategy):
+    def __init__(self) -> None:
+        self.done = set()
+
+    def on_trade(self, context, event):
+        if event.market_ticker in self.done:
+            return
+        if event.market_ticker.endswith("YES"):
+            context.buy_yes(event.market_ticker, quantity=1)
+        else:
+            context.buy_no(event.market_ticker, quantity=1)
+        self.done.add(event.market_ticker)
+
+
 class EventDrivenBacktestEngineTests(unittest.TestCase):
     def test_historical_trade_replay_runs_through_event_engine(self):
         trades = [
@@ -69,32 +257,18 @@ class EventDrivenBacktestEngineTests(unittest.TestCase):
         self.assertEqual([event.status for event in result.order_events], ["accepted", "filled", "accepted", "filled"])
 
     def test_partial_fills_are_tracked_across_trade_events(self):
-        trades = [
-            {
-                "ticker": "FED-23DEC-T3.00",
-                "created_time": "2026-03-15T12:00:00Z",
-                "yes_price_dollars": "0.4500",
-                "no_price_dollars": "0.5500",
-                "count_fp": "1.00",
-            },
-            {
-                "ticker": "FED-23DEC-T3.00",
-                "created_time": "2026-03-15T12:01:00Z",
-                "yes_price_dollars": "0.4500",
-                "no_price_dollars": "0.5500",
-                "count_fp": "1.00",
-            },
-        ]
-
         result = EventDrivenBacktestEngine(initial_cash_cents=200).run(
-            HistoricalTradeReplay.from_trade_dicts(trades),
+            [
+                trade_event("2026-03-15T12:00:00Z", yes_price_cents=45, trade_quantity="1.00"),
+                trade_event("2026-03-15T12:01:00Z", yes_price_cents=45, trade_quantity="1.00"),
+            ],
             PartialFillStrategy(),
         )
 
-        self.assertEqual([fill.quantity for fill in result.fills], [result.fills[0].quantity, result.fills[1].quantity])
         self.assertEqual(str(result.fills[0].quantity), "1.00")
         self.assertEqual(str(result.fills[1].quantity), "1.00")
         self.assertEqual([event.status for event in result.order_events], ["accepted", "partially_filled", "filled"])
+        self.assertEqual(str(result.final_orders[0].reserved_cash_cents), "0.00")
         self.assertEqual(str(result.final_equity_cents), "200.00")
 
     def test_market_data_replay_supports_resting_order_cancellation(self):
@@ -133,6 +307,176 @@ class EventDrivenBacktestEngineTests(unittest.TestCase):
         self.assertEqual([event.status for event in result.order_events], ["accepted", "canceled"])
         self.assertEqual(len(result.fills), 0)
         self.assertEqual(str(result.final_cash_cents), "100.00")
+
+    def test_reservation_rejects_overlapping_resting_buy_orders(self):
+        result = EventDrivenBacktestEngine(initial_cash_cents=100).run(
+            [book_event("2026-03-15T12:00:00Z", yes_bid=35, yes_ask=50, no_bid=50, no_ask=65)],
+            ReservationConflictStrategy(),
+        )
+
+        self.assertEqual([event.status for event in result.order_events], ["accepted", "rejected"])
+        self.assertIn("Insufficient available cash", result.order_events[1].reason)
+        self.assertEqual(str(result.final_orders[0].reserved_cash_cents), "80.00")
+
+    def test_reservation_rejects_overlapping_inventory_orders(self):
+        result = EventDrivenBacktestEngine(initial_cash_cents=200).run(
+            [
+                trade_event("2026-03-15T12:00:00Z", yes_price_cents=40, trade_quantity="2.00"),
+                book_event("2026-03-15T12:01:00Z", yes_bid=35, yes_ask=50, no_bid=50, no_ask=65),
+            ],
+            InventoryConflictStrategy(),
+        )
+
+        self.assertEqual([event.status for event in result.order_events], ["accepted", "filled", "accepted", "rejected"])
+        self.assertIn("Insufficient available yes inventory", result.order_events[-1].reason)
+
+    def test_cancel_releases_reservation_before_replace_when_queued_first(self):
+        result = EventDrivenBacktestEngine(initial_cash_cents=100).run(
+            [
+                book_event("2026-03-15T12:00:00Z", yes_bid=35, yes_ask=50, no_bid=50, no_ask=65),
+                book_event("2026-03-15T12:01:00Z", yes_bid=35, yes_ask=50, no_bid=50, no_ask=65),
+            ],
+            CancelReplaceStrategy(submit_before_cancel=False),
+        )
+
+        self.assertEqual([event.status for event in result.order_events], ["accepted", "canceled", "accepted"])
+        self.assertEqual(result.final_orders[-1].tag, "replacement")
+        self.assertEqual(result.final_orders[-1].status, "accepted")
+
+    def test_submit_before_cancel_is_rejected_when_old_order_still_reserves_cash(self):
+        result = EventDrivenBacktestEngine(initial_cash_cents=40).run(
+            [
+                book_event("2026-03-15T12:00:00Z", yes_bid=35, yes_ask=50, no_bid=50, no_ask=65),
+                book_event("2026-03-15T12:01:00Z", yes_bid=35, yes_ask=50, no_bid=50, no_ask=65),
+            ],
+            CancelReplaceStrategy(submit_before_cancel=True),
+        )
+
+        self.assertEqual([event.status for event in result.order_events], ["accepted", "rejected", "canceled"])
+        self.assertEqual(result.final_orders[0].status, "canceled")
+        self.assertEqual(result.final_orders[1].status, "rejected")
+
+    def test_partial_fill_then_cancel_releases_remaining_reservation(self):
+        result = EventDrivenBacktestEngine(initial_cash_cents=200).run(
+            [
+                trade_event("2026-03-15T12:00:00Z", yes_price_cents=45, trade_quantity="1.00"),
+                trade_event("2026-03-15T12:01:00Z", yes_price_cents=60, trade_quantity="1.00"),
+            ],
+            PartialFillThenCancelStrategy(),
+        )
+
+        self.assertEqual([event.status for event in result.order_events], ["accepted", "partially_filled", "canceled"])
+        self.assertEqual(str(result.final_orders[0].reserved_cash_cents), "0.00")
+        self.assertEqual(str(result.fills[0].cash_after_cents), "155.00")
+
+    def test_attempted_cancel_after_full_fill_does_not_overwrite_order_state(self):
+        result = EventDrivenBacktestEngine(initial_cash_cents=100).run(
+            [trade_event("2026-03-15T12:00:00Z", yes_price_cents=40, trade_quantity="1.00")],
+            CancelAfterFillStrategy(),
+        )
+
+        self.assertEqual([event.status for event in result.order_events], ["accepted", "filled", "filled"])
+        self.assertEqual(result.final_orders[0].status, "filled")
+        self.assertEqual(result.order_events[-1].reason, "Order is not cancelable in its current state")
+
+    def test_insufficient_cash_after_first_fill_rejects_later_order(self):
+        result = EventDrivenBacktestEngine(initial_cash_cents=100).run(
+            [
+                trade_event("2026-03-15T12:00:00Z", yes_price_cents=60, trade_quantity="1.00"),
+                trade_event("2026-03-15T12:01:00Z", yes_price_cents=45, trade_quantity="1.00"),
+            ],
+            LaterCashInsufficientStrategy(),
+        )
+
+        self.assertEqual([event.status for event in result.order_events], ["accepted", "filled", "rejected"])
+        self.assertIn("Insufficient available cash", result.order_events[-1].reason)
+
+    def test_yes_and_no_side_accounting_is_tracked_cleanly(self):
+        result = EventDrivenBacktestEngine(initial_cash_cents=200).run(
+            [
+                trade_event("2026-03-15T12:00:00Z", yes_price_cents=40, trade_quantity="1.00"),
+                trade_event("2026-03-15T12:01:00Z", yes_price_cents=60, trade_quantity="1.00"),
+            ],
+            YesNoAccountingStrategy(),
+        )
+
+        self.assertEqual([fill.action for fill in result.fills], ["buy_yes", "buy_no"])
+        self.assertEqual(str(result.fills[-1].yes_position), "1.00")
+        self.assertEqual(str(result.fills[-1].no_position), "1.00")
+        self.assertEqual(str(result.final_equity_cents), "220.00")
+
+    def test_settlement_cancels_open_orders_and_realizes_payout(self):
+        result = EventDrivenBacktestEngine(initial_cash_cents=200).run(
+            [
+                trade_event("2026-03-15T12:00:00Z", yes_price_cents=40, trade_quantity="2.00"),
+                book_event("2026-03-15T12:01:00Z", yes_bid=35, yes_ask=50, no_bid=50, no_ask=65),
+                SettlementEvent(
+                    timestamp="2026-03-15T12:02:00Z",
+                    event_type="settlement",
+                    market_ticker="FED-23DEC-T3.00",
+                    yes_payout_cents=100,
+                    no_payout_cents=0,
+                ),
+            ],
+            SettlementStrategy(),
+        )
+
+        self.assertEqual([event.status for event in result.order_events], ["accepted", "filled", "accepted", "canceled"])
+        self.assertEqual(str(result.final_cash_cents), "320.00")
+        self.assertEqual(str(result.final_equity_cents), "320.00")
+        self.assertEqual(result.final_orders[-1].status, "canceled")
+
+    def test_missing_settlement_data_cancels_orders_but_waits_for_payout(self):
+        result = EventDrivenBacktestEngine(initial_cash_cents=200).run(
+            [
+                trade_event("2026-03-15T12:00:00Z", yes_price_cents=40, trade_quantity="1.00"),
+                book_event("2026-03-15T12:01:00Z", yes_bid=35, yes_ask=50, no_bid=50, no_ask=65),
+                SettlementEvent(
+                    timestamp="2026-03-15T12:02:00Z",
+                    event_type="settlement",
+                    market_ticker="FED-23DEC-T3.00",
+                ),
+                SettlementEvent(
+                    timestamp="2026-03-15T12:03:00Z",
+                    event_type="settlement",
+                    market_ticker="FED-23DEC-T3.00",
+                    yes_payout_cents=100,
+                    no_payout_cents=0,
+                ),
+            ],
+            SettlementStrategy(),
+        )
+
+        self.assertEqual(result.final_orders[-1].status, "canceled")
+        self.assertEqual(str(result.final_cash_cents), "260.00")
+        self.assertTrue(any("Settlement data missing" in log["message"] for log in result.logs))
+
+    def test_multiple_markets_in_same_family_are_accounted_independently(self):
+        result = EventDrivenBacktestEngine(initial_cash_cents=200).run(
+            [
+                trade_event("2026-03-15T12:00:00Z", market_ticker="FAMILY-YES", yes_price_cents=40, trade_quantity="1.00"),
+                trade_event("2026-03-15T12:00:01Z", market_ticker="FAMILY-NO", yes_price_cents=55, trade_quantity="1.00"),
+                SettlementEvent(
+                    timestamp="2026-03-15T12:01:00Z",
+                    event_type="settlement",
+                    market_ticker="FAMILY-YES",
+                    yes_payout_cents=100,
+                    no_payout_cents=0,
+                ),
+                SettlementEvent(
+                    timestamp="2026-03-15T12:01:01Z",
+                    event_type="settlement",
+                    market_ticker="FAMILY-NO",
+                    yes_payout_cents=0,
+                    no_payout_cents=100,
+                ),
+            ],
+            MultipleMarketFamilyStrategy(),
+        )
+
+        self.assertEqual(str(result.final_cash_cents), "315.00")
+        self.assertEqual(str(result.final_equity_cents), "315.00")
+        self.assertEqual(len(result.final_orders), 2)
 
 
 if __name__ == "__main__":

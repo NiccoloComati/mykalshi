@@ -70,8 +70,9 @@ class OrderbookMarketEvent(MarketEvent):
 
 @dataclass(frozen=True)
 class SettlementEvent(MarketEvent):
-    yes_payout_cents: int = 0
-    no_payout_cents: int = 0
+    yes_payout_cents: int | None = None
+    no_payout_cents: int | None = None
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,9 @@ class OrderEvent(EngineEvent):
     reason: str | None = None
     tag: str | None = None
     note: str | None = None
+    reserved_cash_cents: Decimal = Decimal("0.00")
+    reserved_yes_quantity: Decimal = Decimal("0.00")
+    reserved_no_quantity: Decimal = Decimal("0.00")
 
 
 @dataclass(frozen=True)
@@ -118,6 +122,9 @@ class FillEvent(EngineEvent):
     order_status: str
     tag: str | None = None
     note: str | None = None
+    cash_after_cents: Decimal | None = None
+    yes_position: Decimal | None = None
+    no_position: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -145,6 +152,7 @@ class MarketState:
     yes_levels: tuple[tuple[int, Decimal], ...] = ()
     no_levels: tuple[tuple[int, Decimal], ...] = ()
     settled: bool = False
+    settlement_pending: bool = False
     yes_payout_cents: int | None = None
     no_payout_cents: int | None = None
 
@@ -179,11 +187,14 @@ class MarketState:
             return
 
         if isinstance(event, SettlementEvent):
-            self.settled = True
+            self.settlement_pending = event.yes_payout_cents is None or event.no_payout_cents is None
+            self.settled = not self.settlement_pending
             self.yes_payout_cents = event.yes_payout_cents
             self.no_payout_cents = event.no_payout_cents
-            self.last_trade_yes_price_cents = event.yes_payout_cents
-            self.last_trade_no_price_cents = event.no_payout_cents
+            if event.yes_payout_cents is not None:
+                self.last_trade_yes_price_cents = event.yes_payout_cents
+            if event.no_payout_cents is not None:
+                self.last_trade_no_price_cents = event.no_payout_cents
 
     @property
     def top_yes_bid_size(self) -> Decimal | None:
