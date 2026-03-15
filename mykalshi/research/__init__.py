@@ -45,9 +45,11 @@ from .storage import (
     ParquetOrderbookSink,
     SQLiteMarketDataSink,
     SQLiteOrderbookSink,
+    SplitMarketCaptureSink,
 )
 from .strategies import ProbabilityEdgeStrategy, ThresholdSignalStrategy, target_flat, target_no, target_yes
 from .workflows import (
+    CaptureSession,
     DiscoveredEvent,
     DiscoveredMarket,
     DiscoveredSeries,
@@ -69,6 +71,7 @@ __all__ = [
     "BacktestResult",
     "BacktestRunResult",
     "CancelRequest",
+    "CaptureSession",
     "DiscoveredEvent",
     "DiscoveredMarket",
     "DiscoveredSeries",
@@ -99,6 +102,7 @@ __all__ = [
     "ResearchSession",
     "SQLiteMarketDataSink",
     "SQLiteOrderbookSink",
+    "SplitMarketCaptureSink",
     "SubscriptionRequest",
     "StrategyContext",
     "ThresholdSignalStrategy",

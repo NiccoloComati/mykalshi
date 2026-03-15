@@ -49,15 +49,16 @@ class CliTests(unittest.TestCase):
         with patch(
             "mykalshi.cli.ResearchSession.load_replay_dataset",
             return_value=_SummaryResult({"market_ticker": "MARKET", "replay_event_count": 3}),
+        ), patch(
+            "mykalshi.cli.ResearchSession.open_capture_session",
+            return_value=_SummaryResult({"directory": "capture", "market_ticker": "MARKET"}),
         ):
             code, stdout, stderr = self._run(
                 [
                     "replay",
                     "summary",
-                    "--market-data-source",
-                    "data.sqlite",
-                    "--market-ticker",
-                    "MARKET",
+                    "--session-dir",
+                    "capture",
                 ]
             )
 
@@ -65,20 +66,19 @@ class CliTests(unittest.TestCase):
         self.assertEqual(stderr, "")
         payload = json.loads(stdout)
         self.assertEqual(payload["replay_event_count"], 3)
+        self.assertEqual(payload["session"]["market_ticker"], "MARKET")
 
     def test_backtest_replay_command_loads_strategy_and_runs(self):
         with patch(
-            "mykalshi.cli.ReplayBacktester.run_on_captured_dataset",
+            "mykalshi.cli.ResearchSession.run_replay_backtest",
             return_value=_SummaryResult({"fill_count": 1, "final_equity_cents": "100.00"}),
         ) as mocked_run:
             code, stdout, stderr = self._run(
                 [
                     "backtest",
                     "replay",
-                    "--market-data-source",
-                    "data.sqlite",
-                    "--market-ticker",
-                    "MARKET",
+                    "--session-dir",
+                    "capture",
                     "--strategy",
                     "tests.cli_fixtures:DemoReplayStrategy",
                 ]
@@ -90,6 +90,54 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["fill_count"], 1)
         strategy = mocked_run.call_args.args[0]
         self.assertEqual(type(strategy).__name__, "DemoReplayStrategy")
+
+    def test_capture_session_command_uses_research_session(self):
+        with patch(
+            "mykalshi.cli.ResearchSession.capture_market_session",
+            return_value=_SummaryResult({"directory": "capture", "market_ticker": "MARKET"}),
+        ) as mocked_capture:
+            code, stdout, stderr = self._run(
+                [
+                    "capture",
+                    "session",
+                    "capture",
+                    "--market-ticker",
+                    "MARKET",
+                    "--channels",
+                    "ticker",
+                    "orderbook_delta",
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        payload = json.loads(stdout)
+        self.assertEqual(payload["directory"], "capture")
+        self.assertEqual(mocked_capture.call_args.kwargs["market_ticker"], "MARKET")
+        self.assertEqual(mocked_capture.call_args.kwargs["channels"], ["ticker", "orderbook_delta"])
+
+    def test_capture_session_command_can_use_discovery_filters(self):
+        with patch(
+            "mykalshi.cli.ResearchSession.capture_market_session",
+            return_value=_SummaryResult({"directory": "capture", "market_ticker": "MARKET"}),
+        ) as mocked_capture:
+            code, stdout, stderr = self._run(
+                [
+                    "capture",
+                    "session",
+                    "capture",
+                    "--query",
+                    "miami",
+                    "--status",
+                    "open",
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertEqual(json.loads(stdout)["market_ticker"], "MARKET")
+        self.assertEqual(mocked_capture.call_args.kwargs["query"], "miami")
+        self.assertEqual(mocked_capture.call_args.kwargs["status"], "open")
 
     def test_trading_plan_order_defaults_to_dry_run(self):
         with patch(

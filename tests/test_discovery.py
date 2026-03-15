@@ -245,6 +245,27 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(result[0]["market_ticker"], "HIGHMIA-20260315-B85")
         self.assertEqual(len(calls), 1)
 
+    def test_search_markets_normalizes_active_status_filter_to_open(self):
+        with patch(
+            "mykalshi.discovery.market.get_markets",
+            return_value={
+                "markets": [
+                    {
+                        "ticker": "HIGHMIA-20260315-B85",
+                        "title": "Will the high in Miami exceed 85F?",
+                        "subtitle": "Above 85F",
+                        "status": "active",
+                        "event_ticker": "HIGHMIA-20260315",
+                    }
+                ]
+            },
+        ) as mocked_get_markets:
+            result = discovery.search_markets(status="active", limit=1)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["status"], "active")
+        self.assertEqual(mocked_get_markets.call_args.kwargs["status"], "open")
+
 
 if __name__ == "__main__":
     unittest.main()

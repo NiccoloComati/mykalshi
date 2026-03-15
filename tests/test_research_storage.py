@@ -4,7 +4,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mykalshi.research.storage import ParquetOrderbookSink, SQLiteOrderbookSink
+from mykalshi.research.storage import (
+    ParquetOrderbookSink,
+    SplitMarketCaptureSink,
+    SQLiteMarketDataSink,
+    SQLiteOrderbookSink,
+)
 
 
 def sample_event() -> dict:
@@ -27,6 +32,43 @@ def sample_event() -> dict:
         "yes_levels": [{"price_cents": 22, "count_fp": "300.00"}],
         "no_levels": [{"price_cents": 54, "count_fp": "20.00"}],
         "raw_message": {"type": "orderbook_snapshot"},
+    }
+
+
+def sample_ticker_event() -> dict:
+    return {
+        "captured_at": "2026-03-15T12:01:00.000+00:00",
+        "event_type": "ticker",
+        "channel": "ticker",
+        "subscription_id": 1,
+        "sequence": 3,
+        "market_ticker": "FED-23DEC-T3.00",
+        "market_id": "market-1",
+        "event_ts": None,
+        "side": None,
+        "price_cents": None,
+        "yes_price_cents": None,
+        "no_price_cents": None,
+        "yes_bid_cents": 44,
+        "yes_ask_cents": 46,
+        "yes_bid_size_fp": "12.00",
+        "yes_ask_size_fp": "8.00",
+        "last_trade_size_fp": None,
+        "delta_fp": None,
+        "count_fp": None,
+        "volume_fp": "100.00",
+        "open_interest_fp": "50.00",
+        "dollar_volume": 4200,
+        "dollar_open_interest": 2100,
+        "trade_id": None,
+        "taker_side": None,
+        "best_yes_bid_cents": None,
+        "best_yes_ask_cents": None,
+        "best_no_bid_cents": None,
+        "best_no_ask_cents": None,
+        "yes_levels": None,
+        "no_levels": None,
+        "raw_message": {"type": "ticker"},
     }
 
 
@@ -61,6 +103,29 @@ class ParquetOrderbookSinkTests(unittest.TestCase):
             loaded = sink.load_events()
             self.assertEqual(len(loaded), 1)
             self.assertEqual(loaded[0]["best_yes_bid_cents"], 22)
+
+
+class SplitMarketCaptureSinkTests(unittest.TestCase):
+    def test_split_sink_routes_orderbook_and_market_data_to_separate_sinks(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            market_data_sink = SQLiteMarketDataSink(Path(tmpdir) / "market-data.sqlite")
+            orderbook_sink = SQLiteOrderbookSink(Path(tmpdir) / "orderbook.sqlite")
+            sink = SplitMarketCaptureSink(
+                market_data_sink=market_data_sink,
+                orderbook_sink=orderbook_sink,
+            )
+
+            sink.write_market_data_event(sample_ticker_event())
+            sink.write_market_data_event(sample_event())
+            sink.flush()
+
+            market_data_events = market_data_sink.load_events()
+            orderbook_events = orderbook_sink.load_events()
+            self.assertEqual(len(market_data_events), 1)
+            self.assertEqual(market_data_events[0]["channel"], "ticker")
+            self.assertEqual(len(orderbook_events), 1)
+            self.assertEqual(orderbook_events[0]["channel"], "orderbook_delta")
+            sink.close()
 
 
 if __name__ == "__main__":

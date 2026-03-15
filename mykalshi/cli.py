@@ -20,7 +20,6 @@ from .research import (
     MultiOrderbookSink,
     ParquetMarketDataSink,
     ParquetOrderbookSink,
-    ReplayBacktester,
     ResearchSession,
     SQLiteMarketDataSink,
     SQLiteOrderbookSink,
@@ -198,6 +197,31 @@ def _handle_discover(args: argparse.Namespace) -> Any:
 
 
 def _handle_capture(args: argparse.Namespace) -> Any:
+    if args.capture_command == "session":
+        return ResearchSession().capture_market_session(
+            args.directory,
+            market_ticker=args.market_ticker,
+            query=args.query,
+            category=args.category,
+            series_ticker=args.series_ticker,
+            event_ticker=args.event_ticker,
+            status=args.status,
+            series_title_contains=args.series_title_contains,
+            event_title_contains=args.event_title_contains,
+            market_title_contains=args.market_title_contains,
+            subtitle_contains=args.subtitle_contains,
+            market_ticker_contains=args.market_ticker_contains,
+            channels=args.channels,
+            include_parquet=args.parquet,
+            max_events=args.max_events,
+            duration_secs=args.duration_secs,
+            receive_timeout=args.receive_timeout,
+            send_initial_snapshot=args.send_initial_snapshot,
+            include_book_state=args.include_book_state,
+            authenticated=not args.public,
+            overwrite=args.overwrite,
+        ).summary()
+
     client = KalshiWebsocketClient()
     if args.capture_command == "market-data":
         channels = [channel.strip() for channel in args.channels if channel.strip()]
@@ -239,7 +263,9 @@ def _handle_capture(args: argparse.Namespace) -> Any:
 
 
 def _handle_replay(args: argparse.Namespace) -> Any:
-    dataset = ResearchSession().load_replay_dataset(
+    session = ResearchSession()
+    dataset = session.load_replay_dataset(
+        session_dir=args.session_dir,
         market_data_source=args.market_data_source,
         orderbook_source=args.orderbook_source,
         market_ticker=args.market_ticker,
@@ -248,6 +274,8 @@ def _handle_replay(args: argparse.Namespace) -> Any:
         limit=args.limit,
     )
     payload = dataset.summary()
+    if args.session_dir:
+        payload["session"] = session.open_capture_session(args.session_dir).summary()
     if args.include_events:
         payload["events"] = dataset.replay_events
     return payload
@@ -268,8 +296,9 @@ def _handle_backtest(args: argparse.Namespace) -> Any:
         )
         return result.summary()
 
-    result = ReplayBacktester().run_on_captured_dataset(
+    result = ResearchSession().run_replay_backtest(
         strategy,
+        session_dir=args.session_dir,
         market_data_source=args.market_data_source,
         orderbook_source=args.orderbook_source,
         market_ticker=args.market_ticker,
@@ -391,9 +420,33 @@ def build_parser() -> argparse.ArgumentParser:
     capture_orderbook.add_argument("--receive-timeout", type=float, default=30.0)
     capture_orderbook.add_argument("--include-book-state", action="store_true")
 
+    capture_session = capture_subparsers.add_parser("session", help="Capture one standardized replay session directory.")
+    capture_session.add_argument("directory")
+    capture_session.add_argument("--market-ticker")
+    capture_session.add_argument("--query")
+    capture_session.add_argument("--category")
+    capture_session.add_argument("--series-ticker")
+    capture_session.add_argument("--event-ticker")
+    capture_session.add_argument("--status")
+    capture_session.add_argument("--series-title-contains")
+    capture_session.add_argument("--event-title-contains")
+    capture_session.add_argument("--market-title-contains")
+    capture_session.add_argument("--subtitle-contains")
+    capture_session.add_argument("--market-ticker-contains")
+    capture_session.add_argument("--channels", nargs="+")
+    capture_session.add_argument("--parquet", action="store_true")
+    capture_session.add_argument("--max-events", type=int)
+    capture_session.add_argument("--duration-secs", type=float)
+    capture_session.add_argument("--receive-timeout", type=float, default=30.0)
+    capture_session.add_argument("--send-initial-snapshot", action="store_true")
+    capture_session.add_argument("--include-book-state", action="store_true")
+    capture_session.add_argument("--public", action="store_true")
+    capture_session.add_argument("--overwrite", action="store_true")
+
     replay_parser = subparsers.add_parser("replay", help="Inspect stored replay datasets.")
     replay_subparsers = replay_parser.add_subparsers(dest="replay_command", required=True)
     replay_summary = replay_subparsers.add_parser("summary", help="Summarize a stored replay dataset.")
+    replay_summary.add_argument("--session-dir")
     replay_summary.add_argument("--market-data-source")
     replay_summary.add_argument("--orderbook-source")
     replay_summary.add_argument("--market-ticker")
@@ -416,6 +469,7 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_historical.add_argument("--initial-no-position", type=int, default=0)
 
     backtest_replay = backtest_subparsers.add_parser("replay", help="Run a replay backtest on captured datasets.")
+    backtest_replay.add_argument("--session-dir")
     backtest_replay.add_argument("--market-data-source")
     backtest_replay.add_argument("--orderbook-source")
     backtest_replay.add_argument("--market-ticker")

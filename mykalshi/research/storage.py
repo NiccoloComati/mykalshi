@@ -526,3 +526,49 @@ class MultiMarketDataSink:
         for sink in self.sinks:
             if hasattr(sink, "close"):
                 sink.close()
+
+
+class SplitMarketCaptureSink:
+    """Route mixed websocket capture events into market-data and orderbook sinks."""
+
+    def __init__(
+        self,
+        *,
+        market_data_sink: Any | None = None,
+        orderbook_sink: Any | None = None,
+    ) -> None:
+        if market_data_sink is None and orderbook_sink is None:
+            raise ValueError("At least one underlying sink must be provided")
+        self.market_data_sink = market_data_sink
+        self.orderbook_sink = orderbook_sink
+
+    def write_market_data_event(self, event: dict[str, Any]) -> None:
+        if event.get("channel") == "orderbook_delta":
+            if self.orderbook_sink is not None:
+                self.orderbook_sink.write_orderbook_event(event)
+                return
+            if self.market_data_sink is not None:
+                self.market_data_sink.write_market_data_event(event)
+                return
+        if self.market_data_sink is not None:
+            self.market_data_sink.write_market_data_event(event)
+            return
+        if self.orderbook_sink is not None:
+            self.orderbook_sink.write_orderbook_event(event)
+
+    def write_orderbook_event(self, event: dict[str, Any]) -> None:
+        if self.orderbook_sink is not None:
+            self.orderbook_sink.write_orderbook_event(event)
+            return
+        if self.market_data_sink is not None:
+            self.market_data_sink.write_market_data_event(event)
+
+    def flush(self) -> None:
+        for sink in (self.market_data_sink, self.orderbook_sink):
+            if sink is not None and hasattr(sink, "flush"):
+                sink.flush()
+
+    def close(self) -> None:
+        for sink in (self.market_data_sink, self.orderbook_sink):
+            if sink is not None and hasattr(sink, "close"):
+                sink.close()

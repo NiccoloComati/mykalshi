@@ -253,6 +253,28 @@ result = dataset.backtest(DemoReplayStrategy(), initial_cash_cents=10000)
 print(result.summary())
 ```
 
+The same workflow layer now supports standardized capture-session directories so websocket capture, replay inspection, and replay backtests can share one stored session:
+
+```python
+match = session.resolve_market(query="mars", status="open")
+capture = session.capture_market_session(
+    "data/sessions/mars",
+    market_ticker=match.market_ticker,
+    max_events=1,
+)
+print(capture.summary())
+
+dataset = session.load_replay_dataset(session_dir="data/sessions/mars")
+result = session.run_replay_backtest(
+    DemoReplayStrategy(),
+    session_dir="data/sessions/mars",
+    initial_cash_cents=10000,
+)
+print(result.summary())
+```
+
+You can also resolve the market inside `capture_market_session(...)` by passing discovery filters like `query=...` and `status=...`.
+
 Trade history can also be auto-routed across live and archived sources:
 
 ```python
@@ -301,6 +323,14 @@ result = engine.run(HistoricalTradeReplay.from_trade_dicts(trades), DemoStrategy
 print(result.summary())
 ```
 
+The CLI now exposes the same session-based flow:
+
+```bash
+mykalshi capture session data/sessions/mars --query "mars" --status open --channels orderbook_delta --max-events 1
+mykalshi replay summary --session-dir data/sessions/mars
+mykalshi backtest replay --session-dir data/sessions/mars --strategy tests.cli_fixtures:DemoReplayStrategy
+```
+
 ## Layout
 
 - `mykalshi/client.py`: reusable HTTP client
@@ -332,4 +362,4 @@ The engine design note for this refactor lives in `docs/backtest-engine-architec
 - richer typed models instead of raw dicts
 - higher-level research ergonomics around discovery, load, replay, and backtest workflows
 - richer market-family and settlement metadata for related-contract replay datasets
-- CLI and end-to-end workflows that wrap the now-stronger research and trading layers
+- more polished end-to-end CLI workflows and examples on top of the now-stronger research and trading layers

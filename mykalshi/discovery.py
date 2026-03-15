@@ -5,6 +5,18 @@ from typing import Any, Callable, Iterable
 from . import events, market
 
 
+MARKET_STATUS_FILTER_ALIASES = {
+    "active": "open",
+    "all": None,
+    "initialized": "unopened",
+    "inactive": "unopened",
+    "determined": "settled",
+    "disputed": "settled",
+    "amended": "settled",
+    "finalized": "settled",
+}
+
+
 def _normalized(value: Any) -> str:
     return str(value or "").casefold()
 
@@ -35,6 +47,12 @@ def _matches_query(query: str | None, *values: Any) -> bool:
 
 def _market_subtitle(item: dict[str, Any]) -> str:
     return str(item.get("subtitle") or item.get("yes_sub_title") or item.get("no_sub_title") or "")
+
+
+def _normalize_market_status_filter(status: str | None) -> str | None:
+    if status is None:
+        return None
+    return MARKET_STATUS_FILTER_ALIASES.get(_normalized(status), status)
 
 
 def _collect_filtered_pages(
@@ -277,6 +295,7 @@ def search_markets(
     limit: int | None = None,
     batch_size: int = 200,
 ) -> list[dict[str, Any]]:
+    normalized_status = _normalize_market_status_filter(status)
     use_event_scope = any(
         value is not None
         for value in (
@@ -293,7 +312,7 @@ def search_markets(
         event_items = search_events(
             category=category,
             series_ticker=series_ticker,
-            status=status,
+            status=normalized_status,
             event_ticker=event_ticker,
             series_title_contains=series_title_contains,
             event_title_contains=event_title_contains,
@@ -331,7 +350,7 @@ def search_markets(
             market_items = _collect_filtered_pages(
                 lambda cursor: market.get_markets(
                     event_ticker=event_item["event_ticker"],
-                    status=status,
+                    status=normalized_status,
                     limit=batch_size,
                     cursor=cursor,
                 ),
@@ -389,7 +408,7 @@ def search_markets(
         }
         for market_item in _collect_filtered_pages(
             lambda cursor: market.get_markets(
-                status=status,
+                status=normalized_status,
                 limit=batch_size,
                 cursor=cursor,
             ),

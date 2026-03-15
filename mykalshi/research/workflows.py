@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
+import shutil
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .. import discovery
@@ -15,6 +19,20 @@ from .datasets import (
     orderbook_events_to_dataframe,
 )
 from .engine import BacktestRunResult, KalshiStrategy
+from .storage import (
+    MultiMarketDataSink,
+    MultiOrderbookSink,
+    ParquetMarketDataSink,
+    ParquetOrderbookSink,
+    SQLiteMarketDataSink,
+    SQLiteOrderbookSink,
+    SplitMarketCaptureSink,
+)
+from .websocket import KalshiWebsocketClient
+
+
+SESSION_MANIFEST_NAME = "manifest.json"
+DEFAULT_CAPTURE_CHANNELS = ("ticker", "trade", "orderbook_delta")
 
 
 def _first_non_empty_market_ticker(*event_groups: Iterable[dict[str, Any]]) -> str | None:
@@ -23,6 +41,63 @@ def _first_non_empty_market_ticker(*event_groups: Iterable[dict[str, Any]]) -> s
             market_ticker = event.get("market_ticker")
             if market_ticker:
                 return str(market_ticker)
+    return None
+
+
+def _capture_event_summary(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    materialized = list(events)
+    counts = Counter(str(event.get("channel") or event.get("event_type") or "unknown") for event in materialized)
+    first_timestamp = materialized[0].get("captured_at") if materialized else None
+    last_timestamp = materialized[-1].get("captured_at") if materialized else None
+    return {
+        "event_count": len(materialized),
+        "channel_counts": dict(sorted(counts.items())),
+        "first_timestamp": first_timestamp,
+        "last_timestamp": last_timestamp,
+    }
+
+
+def _serialize_manifest_value(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
+    return value
+
+
+def _write_manifest(path: Path, payload: dict[str, Any]) -> None:
+    path.write_text(
+        json.dumps(payload, indent=2, default=_serialize_manifest_value) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _normalize_capture_channels(channels: Iterable[str] | None) -> list[str]:
+    normalized = []
+    for channel in channels or DEFAULT_CAPTURE_CHANNELS:
+        stripped = str(channel).strip()
+        if stripped and stripped not in normalized:
+            normalized.append(stripped)
+    if not normalized:
+        raise ValueError("At least one capture channel must be provided")
+    return normalized
+
+
+def _resolve_session_output(
+    directory: Path,
+    outputs: dict[str, Any],
+    *,
+    preferred_keys: tuple[str, ...],
+    fallback_names: tuple[str, ...],
+) -> Path | None:
+    for key in preferred_keys:
+        relative_path = outputs.get(key)
+        if relative_path:
+            resolved = directory / str(relative_path)
+            if resolved.exists():
+                return resolved
+    for name in fallback_names:
+        candidate = directory / name
+        if candidate.exists():
+            return candidate
     return None
 
 
@@ -266,6 +341,97 @@ class ReplayDataset:
         }
 
 
+@dataclass(frozen=True)
+class CaptureSession:
+    directory: Path
+    market_ticker: str | None
+    manifest: dict[str, Any] = field(default_factory=dict)
+    market_data_source: Path | None = None
+    orderbook_source: Path | None = None
+
+    @classmethod
+    def from_directory(cls, directory: str | Path) -> "CaptureSession":
+        session_directory = Path(directory)
+        manifest_path = session_directory / SESSION_MANIFEST_NAME
+        manifest: dict[str, Any] = {}
+        if manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        outputs = manifest.get("outputs", {})
+        market_ticker = manifest.get("market_ticker")
+        market_data_source = _resolve_session_output(
+            session_directory,
+            outputs,
+            preferred_keys=("market_data_sqlite", "market_data_parquet_dir"),
+            fallback_names=("market-data.sqlite", "market-data"),
+        )
+        orderbook_source = _resolve_session_output(
+            session_directory,
+            outputs,
+            preferred_keys=("orderbook_sqlite", "orderbook_parquet_dir"),
+            fallback_names=("orderbook.sqlite", "orderbook"),
+        )
+        return cls(
+            directory=session_directory,
+            market_ticker=market_ticker,
+            manifest=manifest,
+            market_data_source=market_data_source,
+            orderbook_source=orderbook_source,
+        )
+
+    @property
+    def manifest_path(self) -> Path:
+        return self.directory / SESSION_MANIFEST_NAME
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "directory": str(self.directory),
+            "manifest_path": str(self.manifest_path),
+            "market_ticker": self.market_ticker,
+            "channels": list(self.manifest.get("channels", [])),
+            "market_data_source": str(self.market_data_source) if self.market_data_source is not None else None,
+            "orderbook_source": str(self.orderbook_source) if self.orderbook_source is not None else None,
+            "capture_summary": self.manifest.get("capture_summary"),
+        }
+
+    def load_dataset(
+        self,
+        *,
+        market_ticker: str | None = None,
+        channel: str | None = None,
+        include_replayed_orderbook_levels: bool = True,
+        limit: int | None = None,
+    ) -> ReplayDataset:
+        return ReplayDataset.from_sources(
+            market_data_source=self.market_data_source,
+            orderbook_source=self.orderbook_source,
+            market_ticker=market_ticker or self.market_ticker,
+            channel=channel,
+            include_replayed_orderbook_levels=include_replayed_orderbook_levels,
+            limit=limit,
+        )
+
+    def backtest(
+        self,
+        strategy: KalshiStrategy,
+        *,
+        backtester: ReplayBacktester | None = None,
+        market_ticker: str | None = None,
+        include_replayed_orderbook_levels: bool = True,
+        limit: int | None = None,
+        **kwargs: Any,
+    ) -> BacktestRunResult:
+        dataset = self.load_dataset(
+            market_ticker=market_ticker,
+            include_replayed_orderbook_levels=include_replayed_orderbook_levels,
+            limit=limit,
+        )
+        return dataset.backtest(
+            strategy,
+            backtester=backtester,
+            **kwargs,
+        )
+
+
 class ResearchSession:
     """User-facing helper for common discovery, replay, and backtest workflows."""
 
@@ -274,9 +440,11 @@ class ResearchSession:
         *,
         replay_backtester_factory: Callable[[], ReplayBacktester] | None = None,
         trade_backtester_factory: Callable[[], TradeBacktester] | None = None,
+        websocket_client_factory: Callable[[], KalshiWebsocketClient] | None = None,
     ) -> None:
         self._replay_backtester_factory = replay_backtester_factory or ReplayBacktester
         self._trade_backtester_factory = trade_backtester_factory or TradeBacktester
+        self._websocket_client_factory = websocket_client_factory or KalshiWebsocketClient
 
     def search_series(self, **filters: Any) -> list[DiscoveredSeries]:
         return [DiscoveredSeries.from_discovery_result(item) for item in discovery.search_series(**filters)]
@@ -315,9 +483,151 @@ class ResearchSession:
             universe.markets.append(match)
         return list(grouped.values())
 
+    def open_capture_session(self, directory: str | Path) -> CaptureSession:
+        return CaptureSession.from_directory(directory)
+
+    def capture_market_session(
+        self,
+        directory: str | Path,
+        *,
+        market_ticker: str | None = None,
+        query: str | None = None,
+        category: str | None = None,
+        series_ticker: str | None = None,
+        event_ticker: str | None = None,
+        status: str | None = None,
+        series_title_contains: str | None = None,
+        event_title_contains: str | None = None,
+        market_title_contains: str | None = None,
+        subtitle_contains: str | None = None,
+        market_ticker_contains: str | None = None,
+        channels: Iterable[str] | None = None,
+        include_parquet: bool = False,
+        max_events: int | None = None,
+        duration_secs: float | None = None,
+        receive_timeout: float = 30.0,
+        send_initial_snapshot: bool | None = None,
+        include_book_state: bool = False,
+        authenticated: bool = True,
+        overwrite: bool = False,
+    ) -> CaptureSession:
+        session_directory = Path(directory)
+        if session_directory.exists() and any(session_directory.iterdir()):
+            if not overwrite:
+                raise FileExistsError(f"Capture session directory already exists and is not empty: {session_directory}")
+            shutil.rmtree(session_directory)
+        session_directory.mkdir(parents=True, exist_ok=True)
+
+        resolved_market = None
+        if market_ticker is None:
+            if not any(
+                value is not None
+                for value in (
+                    query,
+                    category,
+                    series_ticker,
+                    event_ticker,
+                    status,
+                    series_title_contains,
+                    event_title_contains,
+                    market_title_contains,
+                    subtitle_contains,
+                    market_ticker_contains,
+                )
+            ):
+                raise ValueError("Provide market_ticker or discovery filters to resolve one market for capture")
+            resolved_market = self.resolve_market(
+                query=query,
+                category=category,
+                series_ticker=series_ticker,
+                event_ticker=event_ticker,
+                status=status,
+                series_title_contains=series_title_contains,
+                event_title_contains=event_title_contains,
+                market_title_contains=market_title_contains,
+                subtitle_contains=subtitle_contains,
+                market_ticker_contains=market_ticker_contains,
+            )
+            market_ticker = resolved_market.market_ticker
+
+        normalized_channels = _normalize_capture_channels(channels)
+        if "orderbook_delta" in normalized_channels and send_initial_snapshot is None:
+            send_initial_snapshot = True
+
+        market_data_sinks: list[Any] = []
+        orderbook_sinks: list[Any] = []
+        outputs: dict[str, str] = {}
+        if any(channel != "orderbook_delta" for channel in normalized_channels):
+            outputs["market_data_sqlite"] = "market-data.sqlite"
+            market_data_sinks.append(SQLiteMarketDataSink(session_directory / outputs["market_data_sqlite"]))
+            if include_parquet:
+                outputs["market_data_parquet_dir"] = "market-data"
+                market_data_sinks.append(ParquetMarketDataSink(session_directory / outputs["market_data_parquet_dir"]))
+        if "orderbook_delta" in normalized_channels:
+            outputs["orderbook_sqlite"] = "orderbook.sqlite"
+            orderbook_sinks.append(SQLiteOrderbookSink(session_directory / outputs["orderbook_sqlite"]))
+            if include_parquet:
+                outputs["orderbook_parquet_dir"] = "orderbook"
+                orderbook_sinks.append(ParquetOrderbookSink(session_directory / outputs["orderbook_parquet_dir"]))
+
+        market_data_sink = None
+        if len(market_data_sinks) == 1:
+            market_data_sink = market_data_sinks[0]
+        elif market_data_sinks:
+            market_data_sink = MultiMarketDataSink(*market_data_sinks)
+
+        orderbook_sink = None
+        if len(orderbook_sinks) == 1:
+            orderbook_sink = orderbook_sinks[0]
+        elif orderbook_sinks:
+            orderbook_sink = MultiOrderbookSink(*orderbook_sinks)
+
+        sink = SplitMarketCaptureSink(
+            market_data_sink=market_data_sink,
+            orderbook_sink=orderbook_sink,
+        )
+        client = self._websocket_client_factory()
+        try:
+            events = client.capture_market_data_sync(
+                channels=normalized_channels,
+                market_ticker=market_ticker,
+                sink=sink,
+                max_events=max_events,
+                duration_secs=duration_secs,
+                receive_timeout=receive_timeout,
+                send_initial_snapshot=send_initial_snapshot,
+                include_book_state=include_book_state,
+                authenticated=authenticated,
+            )
+        finally:
+            sink.close()
+
+        manifest = {
+            "schema_version": 1,
+            "capture_type": "market_session",
+            "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "market_ticker": market_ticker,
+            "resolved_market": resolved_market.summary() if resolved_market is not None else None,
+            "channels": normalized_channels,
+            "options": {
+                "include_parquet": include_parquet,
+                "max_events": max_events,
+                "duration_secs": duration_secs,
+                "receive_timeout": receive_timeout,
+                "send_initial_snapshot": send_initial_snapshot,
+                "include_book_state": include_book_state,
+                "authenticated": authenticated,
+            },
+            "outputs": outputs,
+            "capture_summary": _capture_event_summary(events),
+        }
+        _write_manifest(session_directory / SESSION_MANIFEST_NAME, manifest)
+        return CaptureSession.from_directory(session_directory)
+
     def load_replay_dataset(
         self,
         *,
+        session_dir: str | Path | None = None,
         market_data_source: str | Any | None = None,
         orderbook_source: str | Any | None = None,
         market_ticker: str | None = None,
@@ -325,6 +635,16 @@ class ResearchSession:
         include_replayed_orderbook_levels: bool = True,
         limit: int | None = None,
     ) -> ReplayDataset:
+        if session_dir is not None:
+            if market_data_source is not None or orderbook_source is not None:
+                raise ValueError("Provide either session_dir or explicit market/orderbook sources, not both")
+            session = self.open_capture_session(session_dir)
+            return session.load_dataset(
+                market_ticker=market_ticker,
+                channel=channel,
+                include_replayed_orderbook_levels=include_replayed_orderbook_levels,
+                limit=limit,
+            )
         return ReplayDataset.from_sources(
             market_data_source=market_data_source,
             orderbook_source=orderbook_source,
@@ -338,6 +658,7 @@ class ResearchSession:
         self,
         strategy: KalshiStrategy,
         *,
+        session_dir: str | Path | None = None,
         market_data_source: str | Any | None = None,
         orderbook_source: str | Any | None = None,
         market_ticker: str | None = None,
@@ -347,6 +668,7 @@ class ResearchSession:
         **backtest_kwargs: Any,
     ) -> BacktestRunResult:
         dataset = self.load_replay_dataset(
+            session_dir=session_dir,
             market_data_source=market_data_source,
             orderbook_source=orderbook_source,
             market_ticker=market_ticker,

@@ -160,6 +160,8 @@ match = session.resolve_market(
 print(match.market_ticker)
 ```
 
+For market discovery specifically, `status="active"` is also accepted and normalized to Kalshi's current filter value internally.
+
 There are now matching helpers for higher-level discovery objects too:
 
 ```python
@@ -529,6 +531,34 @@ result = session.run_replay_backtest(
 print(result.summary())
 ```
 
+If you want one directory-based workflow instead of manually wiring market-data and orderbook paths, capture a standardized replay session:
+
+```python
+from mykalshi.research import ResearchSession
+
+session = ResearchSession()
+match = session.resolve_market(query="mars", status="open")
+
+capture = session.capture_market_session(
+    "data/sessions/mars",
+    market_ticker=match.market_ticker,
+    max_events=1,
+)
+print(capture.summary())
+
+dataset = session.load_replay_dataset(session_dir="data/sessions/mars")
+print(dataset.summary())
+
+result = session.run_replay_backtest(
+    BuyFirstQuoteStrategy(),
+    session_dir="data/sessions/mars",
+    initial_cash_cents=10000,
+)
+print(result.summary())
+```
+
+`capture_market_session(...)` also supports discovery filters directly if you do not want to resolve the market separately.
+
 ## 11. Auto-Route Live And Historical Trades
 
 ```python
@@ -633,6 +663,7 @@ mykalshi discover universes --query "mars" --status open --limit 3
 ```powershell
 mykalshi capture market-data --channels ticker trade --market-ticker KXELONMARS-99 --send-initial-snapshot --max-events 2
 mykalshi capture orderbook KXELONMARS-99 --max-events 1
+mykalshi capture session data\sessions\mars --query "mars" --status open --channels orderbook_delta --max-events 1
 ```
 
 You can also attach sinks directly from the CLI:
@@ -645,6 +676,7 @@ mykalshi capture market-data --channels ticker --market-ticker KXELONMARS-99 --s
 
 ```powershell
 mykalshi replay summary --market-data-source data\market-data.sqlite --orderbook-source data\orderbook.sqlite --market-ticker KXELONMARS-99
+mykalshi replay summary --session-dir data\sessions\mars
 ```
 
 ### Backtests
@@ -661,6 +693,7 @@ Replay example:
 
 ```powershell
 mykalshi backtest replay --market-data-source data\market-data.sqlite --market-ticker KXELONMARS-99 --strategy tests.cli_fixtures:DemoReplayStrategy --initial-cash-cents 10000
+mykalshi backtest replay --session-dir data\sessions\mars --strategy tests.cli_fixtures:DemoReplayStrategy --initial-cash-cents 10000
 ```
 
 ### Trading
