@@ -63,6 +63,7 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - Literal placeholder strings like `"YOUR_TICKER"` are not valid inputs and can cause 404s or long waits.
 - For quick websocket smoke tests, use a real market ticker and `max_events=1`.
 - `market.*` and `historical.*` are intentionally separate because Kalshi splits live/recent data from archived data.
+- `tar_flow.py` and `his_flow.py` are now runnable local smoke-test scripts.
 
 ## Working Conventions
 

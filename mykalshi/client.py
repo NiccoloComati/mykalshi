@@ -45,7 +45,9 @@ class KalshiClient:
             import requests
         except ImportError as exc:
             raise KalshiDependencyError(
-                "requests is required to perform HTTP calls"
+                "requests is required to perform HTTP calls. Use the repo virtual "
+                "environment or install dependencies with "
+                "`pip install -e .[analysis,storage,websocket]`."
             ) from exc
 
         self._session = requests.Session()
