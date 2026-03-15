@@ -1,0 +1,123 @@
+# mykalshi
+
+`mykalshi` is an opinionated Python wrapper around Kalshi's API aimed at four use cases:
+
+- market and order book data collection
+- research and exploratory analysis
+- backtesting-oriented historical data access
+- trading and portfolio operations
+
+The repo started as a lightweight endpoint wrapper. This version reorganizes it into a safer library foundation:
+
+- lazy config and auth loading instead of import-time side effects
+- explicit demo vs production environments
+- a reusable client core
+- historical endpoint coverage for backtesting workflows
+- a reusable order book recorder module instead of only a one-off script
+
+## Install
+
+Core package:
+
+```bash
+pip install .
+```
+
+Research/data stack:
+
+```bash
+pip install .[analysis,storage,websocket]
+```
+
+Or use the included `requirements.txt`:
+
+```bash
+pip install -r requirements.txt
+```
+
+## Configuration
+
+Supported environment variables:
+
+- `KALSHI_ENV=production|demo`
+- `KALSHI_API_KEY_ID`
+- `KALSHI_PRIVATE_KEY_PATH`
+- `KALSHI_REST_BASE_URL`
+- `KALSHI_WS_URL`
+
+Environment-specific values are also supported:
+
+- `KALSHI_DEMO_API_KEY_ID`
+- `KALSHI_DEMO_PRIVATE_KEY_PATH`
+- `KALSHI_PROD_API_KEY_ID`
+- `KALSHI_PROD_PRIVATE_KEY_PATH`
+
+Legacy variables from the original repo are still supported:
+
+- `ENV`
+- `DEMO_KEYID`
+- `DEMO_KEYFILE`
+- `PROD_KEYID`
+- `PROD_KEYFILE`
+
+## Quick Start
+
+```python
+from mykalshi import market
+
+markets = market.get_markets(limit=5, status="open")
+print(markets["markets"][0]["ticker"])
+```
+
+```python
+from mykalshi import historical
+
+cutoff = historical.get_historical_cutoff()
+trades = historical.get_historical_trades(ticker="INXD-25DEC31-T10000", limit=100)
+```
+
+```python
+from mykalshi import KalshiClient, KalshiConfig
+
+client = KalshiClient(KalshiConfig.from_env())
+balance = client.get("/portfolio/balance", authenticated=True)
+print(balance)
+```
+
+## Data Collection
+
+Reusable recorder utilities live in `mykalshi.recorder`:
+
+```python
+from mykalshi.recorder import MarketLOBRecorder
+
+recorder = MarketLOBRecorder(
+    tickers=["KXBTC-YES", "KXBTC-NO"],
+    interval_secs=5.0,
+    output_path="lob_stream.jsonl",
+)
+recorder.start(duration_secs=60)
+```
+
+The top-level `recorder_script.py` now acts as a thin deployment script around that library code.
+
+## Layout
+
+- `mykalshi/client.py`: reusable HTTP client
+- `mykalshi/config.py`: environment and credential loading
+- `mykalshi/auth.py`: request signing helpers
+- `mykalshi/historical.py`: historical data endpoints
+- `mykalshi/recorder.py`: order book capture utilities
+- `mykalshi/market.py`, `events.py`, `trading.py`, `communications.py`, `exchange.py`: endpoint wrappers
+
+## Engineering Log
+
+Persistent handoff notes for future Codex runs live under `docs/codex/`. The active state is in `docs/codex/current-context.md`, and commit-aligned notes live under `docs/codex/changes/`.
+
+## Near-Term Roadmap
+
+- richer typed models instead of raw dicts
+- historical/live auto-routing helpers for backtests
+- websocket client abstractions for order book delta replay
+- dataset sinks for parquet, sqlite, and object storage
+- a cleaner strategy/backtest layer on top of the raw API client

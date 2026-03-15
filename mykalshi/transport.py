@@ -1,45 +1,43 @@
-from .session import sign_request, BASE_URL
-import requests
+from __future__ import annotations
 
-# Generic HTTP methods
+from typing import Any, Callable
 
-# Generic GET request
-# `endpoint` should be like '/communications/id'
-# `params` is a dictionary of URL parameters
-def kalshi_get(endpoint, params=None):
-    full_path = "/trade-api/v2" + endpoint  # for signing
-    url = BASE_URL + endpoint               # for actual request
-    headers = sign_request("GET", full_path)
-    response = requests.get(url, headers=headers, params=params)
-    response.raise_for_status()
-    return response.json()
+from .client import get_default_client
 
-# Generic POST request
-# `body` is a JSON-serializable dictionary
-def kalshi_post(endpoint, body=None):
-    full_path = "/trade-api/v2" + endpoint
-    url = BASE_URL + endpoint
-    headers = sign_request("POST", full_path)
-    response = requests.post(url, headers=headers, json=body)
-    response.raise_for_status()
-    return response.json() if response.content else {}
 
-# Generic PUT request
-# Used for actions like confirming or accepting quotes
-def kalshi_put(endpoint, body=None):
-    full_path = "/trade-api/v2" + endpoint
-    url = BASE_URL + endpoint
-    headers = sign_request("PUT", full_path)
-    response = requests.put(url, headers=headers, json=body)
-    response.raise_for_status()
-    return response.json() if response.content else {}
+def kalshi_get(endpoint, params=None, authenticated=False):
+    return get_default_client().get(endpoint, params=params, authenticated=authenticated)
 
-# Generic DELETE request
-# Deletes the resource at the endpoint (quote, RFQ, etc.)
-def kalshi_delete(endpoint):
-    full_path = "/trade-api/v2" + endpoint
-    url = BASE_URL + endpoint
-    headers = sign_request("DELETE", full_path)
-    response = requests.delete(url, headers=headers)
-    response.raise_for_status()
-    return response.status_code
+
+def kalshi_post(endpoint, body=None, authenticated=False):
+    return get_default_client().post(endpoint, json_body=body, authenticated=authenticated)
+
+
+def kalshi_put(endpoint, body=None, authenticated=False):
+    return get_default_client().put(endpoint, json_body=body, authenticated=authenticated)
+
+
+def kalshi_delete(endpoint, body=None, params=None, authenticated=False):
+    return get_default_client().delete(
+        endpoint,
+        params=params,
+        json_body=body,
+        authenticated=authenticated,
+    )
+
+
+def collect_cursor_pages(
+    fetch_page: Callable[[str | None], dict[str, Any]],
+    *,
+    item_key: str,
+    cursor_key: str = "cursor",
+):
+    items = []
+    cursor = None
+    while True:
+        response = fetch_page(cursor)
+        items.extend(response.get(item_key, []))
+        cursor = response.get(cursor_key)
+        if not cursor:
+            break
+    return items

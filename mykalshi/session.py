@@ -1,39 +1,31 @@
-import os
-import base64
-import time
-from dotenv import load_dotenv
-from cryptography.hazmat.primitives import serialization, hashes
-from cryptography.hazmat.primitives.asymmetric import padding
-from cryptography.hazmat.backends import default_backend
+from __future__ import annotations
 
-load_dotenv()
+from .auth import KalshiAuthSigner
+from .config import KalshiConfig
+from .exceptions import KalshiAuthenticationError
 
-ENV = os.getenv("ENV", "DEMO")
-KEY_ID = os.getenv(f"{ENV}_KEYID")
-KEY_FILE = os.getenv(f"{ENV}_KEYFILE")
-BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
 
-with open(KEY_FILE, "rb") as f:
-    PRIVATE_KEY = serialization.load_pem_private_key(f.read(), password=None, backend=default_backend())
+_config = KalshiConfig.from_env()
+
+ENV = _config.environment.value.upper()
+KEY_ID = _config.api_key_id
+KEY_FILE = _config.private_key_path
+BASE_URL = _config.resolved_rest_base_url
+
 
 def sign_request(method, full_path):
-    timestamp = str(int(time.time() * 1000))
-    msg = timestamp + method.upper() + full_path
-    signature = base64.b64encode(
-        PRIVATE_KEY.sign(
-            msg.encode("utf-8"),
-            padding.PSS(
-                mgf=padding.MGF1(hashes.SHA256()),
-                salt_length=padding.PSS.DIGEST_LENGTH
-            ),
-            hashes.SHA256()
+    if not KEY_ID or not KEY_FILE:
+        raise KalshiAuthenticationError(
+            "Kalshi credentials are not configured. Set KALSHI_API_KEY_ID and "
+            "KALSHI_PRIVATE_KEY_PATH, or the legacy ENV/DEMO_KEY*/PROD_KEY* variables."
         )
-    ).decode("utf-8")
-    
-    return {
-        "KALSHI-ACCESS-KEY": KEY_ID,
-        "KALSHI-ACCESS-TIMESTAMP": timestamp,
-        "KALSHI-ACCESS-SIGNATURE": signature,
-        "accept": "application/json",
-        "content-type": "application/json"
-    }
+
+    signer = KalshiAuthSigner(api_key_id=KEY_ID, private_key_path=KEY_FILE)
+    headers = signer.sign_path(method, full_path)
+    headers.update(
+        {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+    )
+    return headers
