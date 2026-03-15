@@ -8,6 +8,10 @@ def get_balance():
     return kalshi_get("/portfolio/balance", authenticated=True)
 
 
+def get_account_limits():
+    return kalshi_get("/account/limits", authenticated=True)
+
+
 def get_fills(ticker=None, order_id=None, min_ts=None, max_ts=None, limit=100, cursor=None):
     params = {
         "ticker": ticker,

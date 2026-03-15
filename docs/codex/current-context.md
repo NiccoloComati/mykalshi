@@ -77,6 +77,9 @@ The foundation layer has been exercised in the local `.venv` on 2026-03-15.
   - `ResearchSession.load_replay_dataset(...)`
   - `ReplayDataset.backtest(...)`
   - `ResearchSession.run_replay_backtest(...)`
+- live rate-limit checks passed through:
+  - `trading.get_account_limits()` returning `read_limit=20`, `write_limit=10`, `usage_tier=basic`
+  - `ResearchSession.search_markets(status="open", limit=1)` after the discovery paging fix
 
 ## Safety Note
 
@@ -112,6 +115,8 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - `research.workflows` now provides `DiscoveredMarket`, `ReplayDataset`, and `ResearchSession` so discovery, dataset loading, and replay/historical backtests can be driven through one higher-level API.
 - `research.capture_market_data_sync(...)` is now the preferred entry point for live ticker/trade websocket collection.
 - `routing.get_trades_auto(...)` is now the preferred entry point when code should not need to manually split live and archived trade sources.
+- `client.KalshiClient` now has centralized account-aware rate limiting, `429` retry handling, and `/account/limits` auto-detection.
+- `discovery.*` now stops paging once search limits are satisfied instead of fetching full result sets and truncating afterward.
 
 ## Working Conventions
 

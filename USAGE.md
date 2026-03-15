@@ -21,6 +21,8 @@ pip install -e .[analysis,storage,websocket]
 
 Your root `.env` currently resolves to production, so authenticated calls hit the live account unless you switch `KALSHI_ENV=demo`.
 
+The client now rate-limits requests centrally. By default it also auto-detects your account's current Kalshi `read_limit` and `write_limit` from `/account/limits`.
+
 ## 2. Import Surface
 
 The main modules are:
@@ -508,6 +510,7 @@ Examples:
 ```python
 from mykalshi import trading
 
+print(trading.get_account_limits())
 print(trading.get_balance())
 print(trading.get_orders(limit=10))
 ```

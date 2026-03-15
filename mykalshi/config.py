@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from enum import Enum
 
+from .rate_limit import DEFAULT_READ_LIMIT_PER_SECOND, DEFAULT_WRITE_LIMIT_PER_SECOND
+
 
 PRODUCTION_REST_BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
 DEMO_REST_BASE_URL = "https://demo-api.kalshi.co/trade-api/v2"
@@ -26,6 +28,18 @@ def _first_env(*names: str) -> str | None:
         if value:
             return value
     return None
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 class KalshiEnvironment(str, Enum):
@@ -57,6 +71,12 @@ class KalshiConfig:
     ws_url: str | None = None
     timeout_seconds: float = 15.0
     user_agent: str = "mykalshi/0.2.0"
+    enable_rate_limiting: bool = True
+    auto_detect_account_limits: bool = True
+    read_limit_per_second: float = DEFAULT_READ_LIMIT_PER_SECOND
+    write_limit_per_second: float = DEFAULT_WRITE_LIMIT_PER_SECOND
+    account_limits_cache_seconds: float = 300.0
+    max_rate_limit_retries: int = 2
 
     @property
     def resolved_rest_base_url(self) -> str:
@@ -118,4 +138,12 @@ class KalshiConfig:
             private_key_path=private_key_path,
             rest_base_url=_first_env("KALSHI_REST_BASE_URL"),
             ws_url=_first_env("KALSHI_WS_URL"),
+            enable_rate_limiting=_bool_env("KALSHI_ENABLE_RATE_LIMITING", True),
+            auto_detect_account_limits=_bool_env("KALSHI_AUTO_DETECT_ACCOUNT_LIMITS", True),
+            read_limit_per_second=float(_first_env("KALSHI_READ_LIMIT_PER_SECOND") or DEFAULT_READ_LIMIT_PER_SECOND),
+            write_limit_per_second=float(_first_env("KALSHI_WRITE_LIMIT_PER_SECOND") or DEFAULT_WRITE_LIMIT_PER_SECOND),
+            account_limits_cache_seconds=float(
+                _first_env("KALSHI_ACCOUNT_LIMITS_CACHE_SECONDS") or "300.0"
+            ),
+            max_rate_limit_retries=int(_first_env("KALSHI_MAX_RATE_LIMIT_RETRIES") or "2"),
         )

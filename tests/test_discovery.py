@@ -9,10 +9,14 @@ from mykalshi import discovery
 class DiscoveryTests(unittest.TestCase):
     def test_search_series_filters_case_insensitively(self):
         with patch(
-            "mykalshi.discovery.events.get_all_series",
-            return_value=[
-                {"ticker": "HIGHMIA", "title": "Highest temperature in Miami", "tags": ["Daily temperature"]},
-                {"ticker": "RAINNYC", "title": "Rain in New York", "tags": ["Precipitation"]},
+            "mykalshi.discovery.events.get_series_list",
+            side_effect=[
+                {
+                    "series": [
+                        {"ticker": "HIGHMIA", "title": "Highest temperature in Miami", "tags": ["Daily temperature"]},
+                        {"ticker": "RAINNYC", "title": "Rain in New York", "tags": ["Precipitation"]},
+                    ]
+                }
             ],
         ):
             result = discovery.search_series(category="Climate and Weather", title_contains="miami")
@@ -22,19 +26,21 @@ class DiscoveryTests(unittest.TestCase):
 
     def test_search_events_uses_series_scope_filters(self):
         with patch(
-            "mykalshi.discovery.events.get_all_series",
-            return_value=[{"ticker": "HIGHMIA", "title": "Highest temperature in Miami", "tags": []}],
+            "mykalshi.discovery.events.get_series_list",
+            return_value={"series": [{"ticker": "HIGHMIA", "title": "Highest temperature in Miami", "tags": []}]},
         ), patch(
-            "mykalshi.discovery.events.get_all_events",
-            return_value=[
-                {
-                    "event_ticker": "HIGHMIA-20260315",
-                    "series_ticker": "HIGHMIA",
-                    "title": "Highest temperature in Miami on March 15",
-                    "sub_title": "Daily",
-                    "category": "Climate and Weather",
-                }
-            ],
+            "mykalshi.discovery.events.get_events",
+            return_value={
+                "events": [
+                    {
+                        "event_ticker": "HIGHMIA-20260315",
+                        "series_ticker": "HIGHMIA",
+                        "title": "Highest temperature in Miami on March 15",
+                        "sub_title": "Daily",
+                        "category": "Climate and Weather",
+                    }
+                ]
+            },
         ):
             result = discovery.search_events(
                 series_title_contains="miami",
@@ -47,29 +53,33 @@ class DiscoveryTests(unittest.TestCase):
 
     def test_search_markets_enriches_event_context(self):
         with patch(
-            "mykalshi.discovery.events.get_all_series",
-            return_value=[{"ticker": "HIGHMIA", "title": "Highest temperature in Miami", "tags": []}],
+            "mykalshi.discovery.events.get_series_list",
+            return_value={"series": [{"ticker": "HIGHMIA", "title": "Highest temperature in Miami", "tags": []}]},
         ), patch(
-            "mykalshi.discovery.events.get_all_events",
-            return_value=[
-                {
-                    "event_ticker": "HIGHMIA-20260315",
-                    "series_ticker": "HIGHMIA",
-                    "title": "Highest temperature in Miami on March 15",
-                    "sub_title": "Daily",
-                    "category": "Climate and Weather",
-                }
-            ],
+            "mykalshi.discovery.events.get_events",
+            return_value={
+                "events": [
+                    {
+                        "event_ticker": "HIGHMIA-20260315",
+                        "series_ticker": "HIGHMIA",
+                        "title": "Highest temperature in Miami on March 15",
+                        "sub_title": "Daily",
+                        "category": "Climate and Weather",
+                    }
+                ]
+            },
         ), patch(
-            "mykalshi.discovery._get_all_markets_for_event",
-            return_value=[
-                {
-                    "ticker": "HIGHMIA-20260315-B85",
-                    "title": "Will the high in Miami exceed 85F?",
-                    "subtitle": "Above 85F",
-                    "status": "open",
-                }
-            ],
+            "mykalshi.discovery.market.get_markets",
+            return_value={
+                "markets": [
+                    {
+                        "ticker": "HIGHMIA-20260315-B85",
+                        "title": "Will the high in Miami exceed 85F?",
+                        "subtitle": "Above 85F",
+                        "status": "open",
+                    }
+                ]
+            },
         ):
             result = discovery.search_markets(
                 series_ticker="HIGHMIA",
@@ -108,6 +118,43 @@ class DiscoveryTests(unittest.TestCase):
         ):
             with self.assertRaises(LookupError):
                 discovery.resolve_market(series_ticker="HIGHMIA")
+
+    def test_search_markets_stops_paging_once_limit_is_satisfied(self):
+        calls = []
+
+        def fake_get_markets(*, status=None, limit=None, cursor=None, **kwargs):
+            calls.append({"status": status, "limit": limit, "cursor": cursor})
+            if cursor is None:
+                return {
+                    "markets": [
+                        {
+                            "ticker": "HIGHMIA-20260315-B85",
+                            "title": "Will the high in Miami exceed 85F?",
+                            "subtitle": "Above 85F",
+                            "status": "open",
+                            "event_ticker": "HIGHMIA-20260315",
+                        }
+                    ],
+                    "cursor": "unused-next-page",
+                }
+            return {
+                "markets": [
+                    {
+                        "ticker": "SHOULD-NOT-BE-FETCHED",
+                        "title": "Unexpected extra page",
+                        "subtitle": "",
+                        "status": "open",
+                        "event_ticker": "OTHER",
+                    }
+                ]
+            }
+
+        with patch("mykalshi.discovery.market.get_markets", side_effect=fake_get_markets):
+            result = discovery.search_markets(status="open", limit=1)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["market_ticker"], "HIGHMIA-20260315-B85")
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ def get_events(limit=100, cursor=None, status=None, series_ticker=None, with_nes
     return kalshi_get("/events", {k: v for k, v in params.items() if v is not None})
 
 
-def get_all_events(status=None, series_ticker=None, with_nested_markets=False, batch_size=200):
+def get_all_events(status=None, series_ticker=None, with_nested_markets=False, batch_size=200, max_items=None):
     return collect_cursor_pages(
         lambda cursor: get_events(
             cursor=cursor,
@@ -33,13 +33,16 @@ def get_all_events(status=None, series_ticker=None, with_nested_markets=False, b
             limit=batch_size,
         ),
         item_key="events",
+        max_items=max_items,
     )
 
 
-def get_series_list(category=None, include_product_metadata=False):
+def get_series_list(category=None, include_product_metadata=False, limit=100, cursor=None):
     params = {
         "category": category,
         "include_product_metadata": include_product_metadata,
+        "limit": limit,
+        "cursor": cursor,
     }
     return kalshi_get("/series/", {k: v for k, v in params.items() if v is not None})
 
@@ -48,22 +51,16 @@ def get_series(series_ticker):
     return kalshi_get(f"/series/{series_ticker}")
 
 
-def get_all_series(category=None, include_product_metadata=False, batch_size=100):
+def get_all_series(category=None, include_product_metadata=False, batch_size=100, max_items=None):
     return collect_cursor_pages(
-        lambda cursor: kalshi_get(
-            "/series/",
-            {
-                k: v
-                for k, v in {
-                    "category": category,
-                    "include_product_metadata": include_product_metadata,
-                    "limit": batch_size,
-                    "cursor": cursor,
-                }.items()
-                if v is not None
-            },
+        lambda cursor: get_series_list(
+            category=category,
+            include_product_metadata=include_product_metadata,
+            limit=batch_size,
+            cursor=cursor,
         ),
         item_key="series",
+        max_items=max_items,
     )
 
 

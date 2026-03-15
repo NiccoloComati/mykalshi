@@ -31,12 +31,22 @@ def collect_cursor_pages(
     *,
     item_key: str,
     cursor_key: str = "cursor",
+    max_items: int | None = None,
 ):
     items = []
     cursor = None
     while True:
         response = fetch_page(cursor)
-        items.extend(response.get(item_key, []))
+        page_items = response.get(item_key, [])
+        if max_items is None:
+            items.extend(page_items)
+        else:
+            remaining = max_items - len(items)
+            if remaining <= 0:
+                break
+            items.extend(page_items[:remaining])
+            if len(items) >= max_items:
+                break
         cursor = response.get(cursor_key)
         if not cursor:
             break

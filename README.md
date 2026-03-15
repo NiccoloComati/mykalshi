@@ -44,6 +44,12 @@ Supported environment variables:
 - `KALSHI_PRIVATE_KEY_PATH`
 - `KALSHI_REST_BASE_URL`
 - `KALSHI_WS_URL`
+- `KALSHI_ENABLE_RATE_LIMITING`
+- `KALSHI_AUTO_DETECT_ACCOUNT_LIMITS`
+- `KALSHI_READ_LIMIT_PER_SECOND`
+- `KALSHI_WRITE_LIMIT_PER_SECOND`
+- `KALSHI_ACCOUNT_LIMITS_CACHE_SECONDS`
+- `KALSHI_MAX_RATE_LIMIT_RETRIES`
 
 Environment-specific values are also supported:
 
@@ -59,6 +65,8 @@ Legacy variables from the original repo are still supported:
 - `DEMO_KEYFILE`
 - `PROD_KEYID`
 - `PROD_KEYFILE`
+
+The client now paces requests centrally and can auto-detect your current Kalshi account limits from `/account/limits`, so normal wrapper and discovery usage should avoid preventable `429` bursts.
 
 ## Quick Start
 

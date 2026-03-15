@@ -85,10 +85,11 @@ def get_trades(ticker=None, limit=100, cursor=None, min_ts=None, max_ts=None):
     return kalshi_get("/markets/trades", {k: v for k, v in params.items() if v is not None})
 
 
-def get_all_markets(status=None, batch_size=1000):
+def get_all_markets(status=None, batch_size=1000, max_items=None):
     return collect_cursor_pages(
         lambda cursor: get_markets(limit=batch_size, status=status, cursor=cursor),
         item_key="markets",
+        max_items=max_items,
     )
 
 

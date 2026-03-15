@@ -16,6 +16,11 @@ class WrapperTests(unittest.TestCase):
                 authenticated=True,
             )
 
+    def test_get_account_limits_is_authenticated(self):
+        with patch("mykalshi.trading.kalshi_get") as mocked_get:
+            trading.get_account_limits()
+            mocked_get.assert_called_once_with("/account/limits", authenticated=True)
+
     def test_market_orderbook_is_authenticated(self):
         with patch("mykalshi.market.kalshi_get") as mocked_get:
             market.get_market_orderbook("TEST-TICKER")
