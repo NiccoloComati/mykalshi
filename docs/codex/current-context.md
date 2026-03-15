@@ -29,6 +29,7 @@ Turn `mykalshi` into a clean research and trading toolkit for Kalshi with four s
 - `mykalshi/research/engine/`: modular event-driven backtest engine components
 - `mykalshi/research/datasets.py`: load and replay helpers for stored order book datasets
 - `mykalshi/routing.py`: live/historical trade auto-routing
+- `mykalshi/trading_workflows.py`: higher-level trading state snapshots, execution helpers, and safety rails
 - `mykalshi/market.py`, `trading.py`, `exchange.py`, `events.py`, `communications.py`: endpoint wrappers
 
 ## Verified State
@@ -83,6 +84,12 @@ The foundation layer has been exercised in the local `.venv` on 2026-03-15.
 - live discovery-ergonomics checks passed through:
   - `discovery.search_markets(query="mars", status="open", limit=2)`
   - `ResearchSession.search_market_universes(query="mars", status="open", limit=3)`
+- live trading-workflow checks passed through:
+  - `TradingSession.snapshot(order_status="resting")`
+  - `TradingSession.market_snapshot(...)`
+  - `TradingSession.buy_yes(..., dry_run=True)`
+  - production write blocking via `TradingSession.buy_yes(...)`
+  - `TradingSession.cancel_stale_orders(..., dry_run=True)`
 
 ## Safety Note
 
@@ -90,9 +97,9 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 
 ## Next Implementation Slices
 
-1. Continue improving higher-level research ergonomics around discovery and repeatable research workflows.
+1. Add a user-facing CLI over the now-stronger discovery, replay/backtest, and trading workflow layers.
 2. Add richer market-family and settlement metadata handling where replayed datasets span related contracts.
-3. Expand live trading workflows and safety rails on top of the now-stronger research/backtest core.
+3. Extend the trading workflow layer with more advanced execution controls only after CLI and end-to-end ergonomics improve.
 
 ## Recent Usability Notes
 
@@ -122,6 +129,9 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - `discovery.*` now stops paging once search limits are satisfied instead of fetching full result sets and truncating afterward.
 - `discovery.*` now supports a generic `query` path across series/event/market context plus `resolve_series(...)` and `resolve_event(...)`.
 - `research.workflows.ResearchSession` now wraps series/event discovery and grouped market-universe browsing in addition to replay datasets and backtests.
+- `trading_workflows.TradingSession` is now the preferred higher-level entry point for coherent account state snapshots and safer live-order workflows.
+- `trading_workflows.TradingSafetyPolicy` now provides dry-run mode, production write blocking, order-size/risk caps, open-order caps, allowed/blocked ticker controls, and JSONL audit logging.
+- `trading_workflows` now provides higher-level helpers for market context, order submission, amend, replace, stale-order cancellation, and position flattening.
 
 ## Working Conventions
 

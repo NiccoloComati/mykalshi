@@ -4,8 +4,9 @@ from .formatting import parse_timestamp
 from .transport import kalshi_delete, kalshi_get, kalshi_post
 
 
-def get_balance():
-    return kalshi_get("/portfolio/balance", authenticated=True)
+def get_balance(subaccount=None):
+    params = {"subaccount": subaccount} if subaccount is not None else None
+    return kalshi_get("/portfolio/balance", params, authenticated=True)
 
 
 def get_account_limits():
@@ -57,8 +58,41 @@ def batch_cancel_orders(order_ids):
     return kalshi_delete("/portfolio/orders/batched", body={"ids": order_ids}, authenticated=True)
 
 
-def amend_order(order_id, *, price=None, count=None):
-    body = {k: v for k, v in {"price": price, "count": count}.items() if v is not None}
+def amend_order(
+    order_id,
+    *,
+    ticker=None,
+    action=None,
+    side=None,
+    count=None,
+    count_fp=None,
+    yes_price=None,
+    no_price=None,
+    yes_price_dollars=None,
+    no_price_dollars=None,
+    client_order_id=None,
+    updated_client_order_id=None,
+    price=None,
+):
+    if price is not None:
+        if yes_price is None and side in {None, "yes"}:
+            yes_price = price
+        elif no_price is None and side == "no":
+            no_price = price
+
+    body = {
+        "ticker": ticker,
+        "action": action,
+        "side": side,
+        "count": count,
+        "count_fp": count_fp,
+        "yes_price": yes_price,
+        "no_price": no_price,
+        "yes_price_dollars": yes_price_dollars,
+        "no_price_dollars": no_price_dollars,
+        "client_order_id": client_order_id,
+        "updated_client_order_id": updated_client_order_id,
+    }
     return kalshi_post(f"/portfolio/orders/{order_id}/amend", body, authenticated=True)
 
 

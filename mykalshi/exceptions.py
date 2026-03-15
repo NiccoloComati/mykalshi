@@ -29,3 +29,11 @@ class KalshiHTTPError(KalshiError):
         self.method = method.upper()
         self.url = url
         self.body = body
+
+
+class KalshiSafetyError(KalshiError):
+    """Raised when a safety policy blocks a trading workflow action."""
+
+
+class KalshiWorkflowError(KalshiError):
+    """Raised when a higher-level workflow cannot be completed."""

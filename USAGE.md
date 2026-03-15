@@ -29,6 +29,7 @@ The main modules are:
 
 ```python
 from mykalshi import market, historical, events, trading
+from mykalshi.trading_workflows import OrderIntent, TradingSafetyPolicy, TradingSession
 from mykalshi.research import (
     DiscoveredMarket,
     EventDrivenBacktestEngine,
@@ -541,6 +542,66 @@ print(trading.get_orders(limit=10))
 ```
 
 Because your current config is production, do not place/cancel/amend orders unless that is intentional.
+
+For a higher-level trading workflow layer with unified state snapshots, dry-run support, and production write guards, use `TradingSession`:
+
+```python
+from mykalshi.trading_workflows import TradingSafetyPolicy, TradingSession
+
+session = TradingSession()
+snapshot = session.snapshot(order_status="resting")
+print(snapshot.summary())
+print(snapshot.resting_exposure_by_market())
+```
+
+You can also inspect one market together with account state and the live order book:
+
+```python
+from mykalshi.trading_workflows import TradingSession
+
+session = TradingSession()
+market_view = session.market_snapshot("KXELONMARS-99")
+print(market_view.summary())
+```
+
+High-level execution helpers now exist for submit, amend, replace, stale-order cancellation, and flattening:
+
+```python
+from mykalshi.trading_workflows import TradingSession
+
+session = TradingSession()
+result = session.buy_yes(
+    "KXELONMARS-99",
+    quantity=1,
+    limit_price_cents=35,
+    dry_run=True,
+)
+print(result.summary())
+```
+
+By default, `TradingSession` blocks production writes unless you explicitly opt in. That is intentional. Dry-run mode is the default safe starting point for your current `.env`:
+
+```python
+from mykalshi.trading_workflows import TradingSafetyPolicy, TradingSession
+
+session = TradingSession(
+    policy=TradingSafetyPolicy(
+        dry_run=True,
+        max_order_quantity=5,
+        max_order_risk_cents=500,
+        max_open_orders_per_market=2,
+        audit_log_path="logs/trading-audit.jsonl",
+    )
+)
+
+planned = session.buy_yes("KXELONMARS-99", quantity=1, limit_price_cents=35)
+print(planned.summary())
+```
+
+Two important safety behaviors to keep in mind:
+
+- `cancel_order(...)` and `cancel_stale_orders(...)` can be dry-run planned before you execute them.
+- order submission, amendment, replacement, and flattening are blocked on production unless `allow_production_writes=True` or `dry_run=True`.
 
 ## 13. What Broke In Your Terminal
 

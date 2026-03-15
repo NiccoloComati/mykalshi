@@ -68,6 +68,8 @@ Legacy variables from the original repo are still supported:
 
 The client now paces requests centrally and can auto-detect your current Kalshi account limits from `/account/limits`, so normal wrapper and discovery usage should avoid preventable `429` bursts.
 
+There is now also a higher-level trading workflow layer in `mykalshi.trading_workflows` for coherent account snapshots, dry-run execution planning, stale-order cleanup, and production write guards.
+
 ## Quick Start
 
 ```python
@@ -98,6 +100,14 @@ from mykalshi import KalshiClient, KalshiConfig
 client = KalshiClient(KalshiConfig.from_env())
 balance = client.get("/portfolio/balance", authenticated=True)
 print(balance)
+```
+
+```python
+from mykalshi.trading_workflows import TradingSafetyPolicy, TradingSession
+
+session = TradingSession(policy=TradingSafetyPolicy(dry_run=True))
+snapshot = session.snapshot(order_status="resting")
+print(snapshot.summary())
 ```
 
 ## Data Collection
@@ -291,6 +301,7 @@ print(result.summary())
 - `mykalshi/research/`: websocket capture, storage sinks, backtest helpers, and reusable strategies
 - `mykalshi/research/engine/`: event-driven backtest engine components
 - `mykalshi/routing.py`: live/historical auto-routing helpers
+- `mykalshi/trading_workflows.py`: higher-level trading state snapshots, execution helpers, and safety rails
 - `mykalshi/market.py`, `events.py`, `trading.py`, `communications.py`, `exchange.py`: endpoint wrappers
 
 ## Engineering Log
@@ -308,4 +319,4 @@ The engine design note for this refactor lives in `docs/backtest-engine-architec
 - richer typed models instead of raw dicts
 - higher-level research ergonomics around discovery, load, replay, and backtest workflows
 - richer market-family and settlement metadata for related-contract replay datasets
-- higher-level trading workflows with stronger safety rails
+- CLI and end-to-end workflows that wrap the now-stronger research and trading layers
