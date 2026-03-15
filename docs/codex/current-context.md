@@ -24,7 +24,8 @@ Turn `mykalshi` into a clean research and trading toolkit for Kalshi with four s
 - `mykalshi/recorder.py`: reusable polling-based order book recorder
 - `mykalshi/research/websocket.py`: authenticated websocket capture for order book snapshots and deltas
 - `mykalshi/research/storage.py`: SQLite and Parquet sinks for captured order book events
-- `mykalshi/research/backtest.py`: historical-trade backtest engine and strategy callback API
+- `mykalshi/research/backtest.py`: historical-trade backtest engine with target-position support
+- `mykalshi/research/strategies.py`: reusable threshold and probability-edge strategies
 - `mykalshi/research/datasets.py`: load and replay helpers for stored order book datasets
 - `mykalshi/routing.py`: live/historical trade auto-routing
 - `mykalshi/market.py`, `trading.py`, `exchange.py`, `events.py`, `communications.py`: endpoint wrappers
@@ -56,6 +57,10 @@ The foundation layer has been exercised in the local `.venv` on 2026-03-15.
 - live ticker and trade websocket capture passed through the generic market-data path
 - live generic market-data storage round-trip passed for SQLite and Parquet
 - live auto-routing checks passed for one archived ticker and one live ticker
+- live archived-data dry runs passed for:
+  - `ProbabilityEdgeStrategy`
+  - `ThresholdSignalStrategy`
+  - `PositionTargetSignal` factory helpers
 
 ## Safety Note
 
@@ -63,7 +68,7 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 
 ## Next Implementation Slices
 
-1. Additional execution models and strategy examples for backtests.
+1. Event-driven replay on stored market-data datasets for backtests.
 2. More websocket channels beyond ticker/trade/orderbook.
 3. Auto-routing helpers beyond trades.
 
@@ -75,6 +80,8 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - `tar_flow.py` and `his_flow.py` are now runnable local smoke-test scripts.
 - `discovery.*` is now the preferred starting point when the user wants to target a specific series, event, or market rather than pull arbitrary markets.
 - `research.backtest` now has a more realistic engine shape: orders, fills, fee models, and limit-price rejection.
+- `research.backtest` now also supports target-position signals, staged transitions, and rejection-on-risk instead of aborting the run.
+- `research.strategies` is now the preferred place for reusable signal-to-position logic.
 - `research.capture_market_data_sync(...)` is now the preferred entry point for live ticker/trade websocket collection.
 - `routing.get_trades_auto(...)` is now the preferred entry point when code should not need to manually split live and archived trade sources.
 

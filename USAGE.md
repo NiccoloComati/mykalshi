@@ -29,9 +29,12 @@ The main modules are:
 from mykalshi import market, historical, events, trading
 from mykalshi.research import (
     KalshiWebsocketClient,
-    SQLiteOrderbookSink,
-    ParquetOrderbookSink,
     MultiOrderbookSink,
+    ParquetOrderbookSink,
+    PositionTargetSignal,
+    ProbabilityEdgeStrategy,
+    SQLiteOrderbookSink,
+    ThresholdSignalStrategy,
     TradeBacktester,
     TradeSignal,
 )
@@ -267,17 +270,19 @@ Use a real archived ticker, not a placeholder.
 
 ```python
 from mykalshi import historical
-from mykalshi.research import KalshiTakerFeeModel, TradeBacktester, TradeSignal
+from mykalshi.research import ProbabilityEdgeStrategy, TradeBacktester
 
 sample_trade = historical.get_historical_trades(limit=1)["trades"][0]
 ticker = sample_trade["ticker"]
 
-def strategy(context, trade):
-    if context.yes_position == 0:
-        return TradeSignal("buy_yes", quantity=1, limit_price_cents=60)
-    return None
+strategy = ProbabilityEdgeStrategy(
+    probability_fn=lambda context, trade: "0.58",
+    enter_edge_cents=12,
+    exit_edge_cents=4,
+    target_quantity=1,
+)
 
-result = TradeBacktester(fee_model=KalshiTakerFeeModel()).run_on_historical_trades(
+result = TradeBacktester().run_on_historical_trades(
     ticker,
     strategy,
     initial_cash_cents=10000,
@@ -288,11 +293,38 @@ print(result.summary())
 Current backtest engine features include:
 
 - strategy callbacks
+- target-position signals
 - limit-price support
 - explicit rejected vs filled orders
 - pluggable fee models
 - a Kalshi-style taker fee model
 - mark-to-market summaries with drawdown
+
+You can also emit position targets directly:
+
+```python
+from mykalshi.research import PositionTargetSignal, TradeBacktester
+
+def strategy(context, trade):
+    return PositionTargetSignal(
+        "yes",
+        target_quantity=2,
+        max_trade_quantity=1,
+    )
+```
+
+Or use a generic threshold strategy around any numeric score:
+
+```python
+from mykalshi.research import ThresholdSignalStrategy
+
+strategy = ThresholdSignalStrategy(
+    signal_fn=lambda context, trade: trade["my_score"],
+    yes_threshold=0.50,
+    no_threshold=-0.50,
+    target_quantity=1,
+)
+```
 
 ## 11. Auto-Route Live And Historical Trades
 
@@ -345,8 +377,6 @@ This repo is usable, but not yet polished into a single “app” with one comma
 
 Missing pieces still include:
 
-- replay helpers over stored datasets
-- richer market-selection convenience helpers
 - more websocket channels beyond orderbook-first capture
-- more realistic fee/execution modeling in backtests
+- event-driven replay on stored datasets for backtests
 - a CLI

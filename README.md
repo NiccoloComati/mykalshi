@@ -163,15 +163,21 @@ print(trades["sources_used"])
 Simple historical-trade backtests can now run without notebook CSV glue:
 
 ```python
-from mykalshi.research import KalshiTakerFeeModel, TradeBacktester, TradeSignal
+from mykalshi import historical
+from mykalshi.research import ProbabilityEdgeStrategy, TradeBacktester
 
-def strategy(context, trade):
-    if context.yes_position == 0:
-        return TradeSignal("buy_yes", quantity=1, limit_price_cents=60)
-    return None
+sample_trade = historical.get_historical_trades(limit=1)["trades"][0]
+ticker = sample_trade["ticker"]
 
-result = TradeBacktester(fee_model=KalshiTakerFeeModel()).run_on_historical_trades(
-    "FED-23DEC-T3.00",
+strategy = ProbabilityEdgeStrategy(
+    probability_fn=lambda context, trade: "0.58",
+    enter_edge_cents=12,
+    exit_edge_cents=4,
+    target_quantity=1,
+)
+
+result = TradeBacktester().run_on_historical_trades(
+    ticker,
     strategy,
     initial_cash_cents=10000,
 )
@@ -188,7 +194,7 @@ print(result.summary())
 - `mykalshi/orderbook.py`: shared order book normalization/state helpers
 - `mykalshi/historical.py`: historical data endpoints
 - `mykalshi/recorder.py`: order book capture utilities
-- `mykalshi/research/`: websocket capture, storage sinks, and backtest helpers
+- `mykalshi/research/`: websocket capture, storage sinks, backtest helpers, and reusable strategies
 - `mykalshi/routing.py`: live/historical auto-routing helpers
 - `mykalshi/market.py`, `events.py`, `trading.py`, `communications.py`, `exchange.py`: endpoint wrappers
 
@@ -206,4 +212,4 @@ Concrete workflows and runnable examples live in `USAGE.md`.
 - historical/live auto-routing helpers for backtests
 - websocket client abstractions for order book delta replay
 - dataset sinks for parquet, sqlite, and object storage
-- a cleaner strategy/backtest layer on top of the raw API client
+- event-driven replay on stored market-data datasets

@@ -5,6 +5,7 @@ from .backtest import (
     FixedPerContractFeeModel,
     ImmediateTradeExecutionModel,
     KalshiTakerFeeModel,
+    PositionTargetSignal,
     TradeBacktester,
     TradeSignal,
     ZeroFeeModel,
@@ -25,6 +26,7 @@ from .storage import (
     SQLiteMarketDataSink,
     SQLiteOrderbookSink,
 )
+from .strategies import ProbabilityEdgeStrategy, ThresholdSignalStrategy, target_flat, target_no, target_yes
 from .websocket import (
     KalshiWebsocketClient,
     SubscriptionRequest,
@@ -45,9 +47,12 @@ __all__ = [
     "MultiOrderbookSink",
     "ParquetMarketDataSink",
     "ParquetOrderbookSink",
+    "PositionTargetSignal",
+    "ProbabilityEdgeStrategy",
     "SQLiteMarketDataSink",
     "SQLiteOrderbookSink",
     "SubscriptionRequest",
+    "ThresholdSignalStrategy",
     "TradeBacktester",
     "TradeSignal",
     "ZeroFeeModel",
@@ -60,4 +65,7 @@ __all__ = [
     "normalize_market_data_message",
     "orderbook_events_to_dataframe",
     "replay_orderbook_events",
+    "target_flat",
+    "target_no",
+    "target_yes",
 ]

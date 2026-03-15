@@ -73,6 +73,18 @@ class TradeSignal:
 
 
 @dataclass(frozen=True)
+class PositionTargetSignal:
+    side: str
+    target_quantity: int | float | str | Decimal = 1
+    entry_limit_price_cents: int | None = None
+    exit_limit_price_cents: int | None = None
+    max_trade_quantity: int | float | str | Decimal | None = None
+    slippage_cents: int = 0
+    tag: str | None = None
+    note: str | None = None
+
+
+@dataclass(frozen=True)
 class BacktestFill:
     timestamp: str
     action: str
@@ -138,16 +150,20 @@ class BacktestResult:
             "yes_position": format_decimal(self.yes_position),
             "no_position": format_decimal(self.no_position),
             "order_count": len(self.orders),
+            "filled_order_count": sum(1 for order in self.orders if order.status == "filled"),
+            "rejected_order_count": sum(1 for order in self.orders if order.status != "filled"),
             "fill_count": len(self.fills),
             "mark_count": len(self.marks),
         }
 
 
 FeeModel = Callable[..., int | float | str | Decimal]
+StrategySignal = TradeSignal | PositionTargetSignal
+StrategyResult = StrategySignal | Sequence[StrategySignal] | None
 
 
 class StrategyProtocol(Protocol):
-    def on_trade(self, context: "BacktestContext", trade: dict[str, Any]) -> TradeSignal | Sequence[TradeSignal] | None:
+    def on_trade(self, context: "BacktestContext", trade: dict[str, Any]) -> StrategyResult:
         ...
 
 
@@ -355,19 +371,128 @@ class TradeBacktester:
         self.execution_model = execution_model or ImmediateTradeExecutionModel()
 
     @staticmethod
-    def _normalize_signals(result: TradeSignal | Sequence[TradeSignal] | None) -> list[TradeSignal]:
+    def _normalize_strategy_signals(result: StrategyResult) -> list[StrategySignal]:
         if result is None:
             return []
-        if isinstance(result, TradeSignal):
+        if isinstance(result, (TradeSignal, PositionTargetSignal)):
             return [result]
-        return list(result)
+        signals = list(result)
+        if not all(isinstance(signal, (TradeSignal, PositionTargetSignal)) for signal in signals):
+            raise TypeError("Strategies must return TradeSignal, PositionTargetSignal, or sequences of those types")
+        return signals
+
+    @staticmethod
+    def _build_trade_signal(
+        action: str,
+        quantity: Decimal,
+        signal: PositionTargetSignal,
+        *,
+        limit_price_cents: int | None,
+    ) -> TradeSignal | None:
+        if quantity <= 0:
+            return None
+        return TradeSignal(
+            action=action,
+            quantity=quantity,
+            limit_price_cents=limit_price_cents,
+            slippage_cents=signal.slippage_cents,
+            tag=signal.tag,
+            note=signal.note,
+        )
+
+    @classmethod
+    def _next_trade_signal_for_target(
+        cls,
+        signal: PositionTargetSignal,
+        context: BacktestContext,
+        remaining_trade_quantity: Decimal | None,
+    ) -> TradeSignal | None:
+        if remaining_trade_quantity is not None and remaining_trade_quantity <= 0:
+            return None
+
+        side = signal.side.lower()
+        target_quantity = quantize_count(signal.target_quantity)
+        if target_quantity < 0:
+            raise ValueError("PositionTargetSignal.target_quantity must be non-negative")
+
+        def cap(quantity: Decimal) -> Decimal:
+            if remaining_trade_quantity is None:
+                return quantity
+            return min(quantity, remaining_trade_quantity)
+
+        if side == "flat":
+            return cls._build_trade_signal(
+                "sell_yes",
+                cap(context.yes_position),
+                signal,
+                limit_price_cents=signal.exit_limit_price_cents,
+            ) or cls._build_trade_signal(
+                "sell_no",
+                cap(context.no_position),
+                signal,
+                limit_price_cents=signal.exit_limit_price_cents,
+            )
+
+        if side == "yes":
+            if context.no_position > 0:
+                return cls._build_trade_signal(
+                    "sell_no",
+                    cap(context.no_position),
+                    signal,
+                    limit_price_cents=signal.exit_limit_price_cents,
+                )
+
+            delta_yes = target_quantity - context.yes_position
+            if delta_yes > 0:
+                return cls._build_trade_signal(
+                    "buy_yes",
+                    cap(delta_yes),
+                    signal,
+                    limit_price_cents=signal.entry_limit_price_cents,
+                )
+            if delta_yes < 0:
+                return cls._build_trade_signal(
+                    "sell_yes",
+                    cap(-delta_yes),
+                    signal,
+                    limit_price_cents=signal.exit_limit_price_cents,
+                )
+            return None
+
+        if side == "no":
+            if context.yes_position > 0:
+                return cls._build_trade_signal(
+                    "sell_yes",
+                    cap(context.yes_position),
+                    signal,
+                    limit_price_cents=signal.exit_limit_price_cents,
+                )
+
+            delta_no = target_quantity - context.no_position
+            if delta_no > 0:
+                return cls._build_trade_signal(
+                    "buy_no",
+                    cap(delta_no),
+                    signal,
+                    limit_price_cents=signal.entry_limit_price_cents,
+                )
+            if delta_no < 0:
+                return cls._build_trade_signal(
+                    "sell_no",
+                    cap(-delta_no),
+                    signal,
+                    limit_price_cents=signal.exit_limit_price_cents,
+                )
+            return None
+
+        raise ValueError(f"Unsupported PositionTargetSignal side: {signal.side!r}")
 
     @staticmethod
     def _call_strategy(
-        strategy: StrategyProtocol | Callable[[BacktestContext, dict[str, Any]], TradeSignal | Sequence[TradeSignal] | None],
+        strategy: StrategyProtocol | Callable[[BacktestContext, dict[str, Any]], StrategyResult],
         context: BacktestContext,
         trade: dict[str, Any],
-    ) -> TradeSignal | Sequence[TradeSignal] | None:
+    ) -> StrategyResult:
         if hasattr(strategy, "on_trade"):
             return strategy.on_trade(context, trade)
         return strategy(context, trade)
@@ -402,10 +527,127 @@ class TradeBacktester:
         except TypeError:
             return _cash(fee_model(signal, trade, yes_price_cents, no_price_cents))
 
+    def _process_trade_signal(
+        self,
+        context: BacktestContext,
+        trade: dict[str, Any],
+        signal: TradeSignal,
+        *,
+        yes_price_cents: int,
+        no_price_cents: int,
+    ) -> BacktestOrder:
+        timestamp = str(trade.get("created_time") or trade.get("ts") or "")
+        quantity = quantize_count(signal.quantity)
+        if quantity <= 0:
+            raise ValueError("TradeSignal.quantity must be positive")
+
+        decision = self.execution_model.evaluate(
+            signal,
+            trade,
+            yes_price_cents=yes_price_cents,
+            no_price_cents=no_price_cents,
+        )
+        if decision.status != "filled" or decision.execution_price_cents is None:
+            order = BacktestOrder(
+                timestamp=timestamp,
+                action=signal.action.lower(),
+                quantity=quantity,
+                requested_limit_price_cents=signal.limit_price_cents,
+                execution_price_cents=None,
+                status=decision.status,
+                reason=decision.reason,
+                tag=signal.tag,
+                note=signal.note,
+            )
+            context.orders.append(order)
+            return order
+
+        fee_cents = self._call_fee_model(
+            self.fee_model,
+            signal,
+            trade,
+            yes_price_cents,
+            no_price_cents,
+            decision.execution_price_cents,
+        )
+        try:
+            context.execute(
+                signal,
+                trade,
+                execution_price_cents=decision.execution_price_cents,
+                fee_cents=fee_cents,
+            )
+        except ValueError as exc:
+            order = BacktestOrder(
+                timestamp=timestamp,
+                action=signal.action.lower(),
+                quantity=quantity,
+                requested_limit_price_cents=signal.limit_price_cents,
+                execution_price_cents=decision.execution_price_cents,
+                status="rejected",
+                reason=str(exc),
+                tag=signal.tag,
+                note=signal.note,
+            )
+            context.orders.append(order)
+            return order
+
+        order = BacktestOrder(
+            timestamp=timestamp,
+            action=signal.action.lower(),
+            quantity=quantity,
+            requested_limit_price_cents=signal.limit_price_cents,
+            execution_price_cents=decision.execution_price_cents,
+            status=decision.status,
+            fee_cents=fee_cents,
+            reason=decision.reason,
+            tag=signal.tag,
+            note=signal.note,
+        )
+        context.orders.append(order)
+        return order
+
+    def _process_position_target_signal(
+        self,
+        context: BacktestContext,
+        trade: dict[str, Any],
+        signal: PositionTargetSignal,
+        *,
+        yes_price_cents: int,
+        no_price_cents: int,
+    ) -> None:
+        remaining_trade_quantity = (
+            quantize_count(signal.max_trade_quantity) if signal.max_trade_quantity is not None else None
+        )
+        if remaining_trade_quantity is not None and remaining_trade_quantity <= 0:
+            raise ValueError("PositionTargetSignal.max_trade_quantity must be positive when provided")
+
+        while True:
+            next_signal = self._next_trade_signal_for_target(signal, context, remaining_trade_quantity)
+            if next_signal is None:
+                return
+
+            order = self._process_trade_signal(
+                context,
+                trade,
+                next_signal,
+                yes_price_cents=yes_price_cents,
+                no_price_cents=no_price_cents,
+            )
+            if order.status != "filled":
+                return
+
+            if remaining_trade_quantity is None:
+                continue
+
+            remaining_trade_quantity = quantize_count(remaining_trade_quantity - quantize_count(next_signal.quantity))
+            if remaining_trade_quantity <= 0:
+                return
+
     def run(
         self,
         trades: Iterable[dict[str, Any]],
-        strategy: StrategyProtocol | Callable[[BacktestContext, dict[str, Any]], TradeSignal | Sequence[TradeSignal] | None],
+        strategy: StrategyProtocol | Callable[[BacktestContext, dict[str, Any]], StrategyResult],
         *,
         ticker: str | None = None,
         initial_cash_cents: int | float | str | Decimal = 0,
@@ -424,57 +666,24 @@ class TradeBacktester:
         last_mark: BacktestMark | None = None
         for trade in ordered_trades:
             yes_price_cents, no_price_cents = _extract_trade_prices(trade)
-            signals = self._normalize_signals(self._call_strategy(strategy, context, trade))
+            signals = self._normalize_strategy_signals(self._call_strategy(strategy, context, trade))
             for signal in signals:
-                decision = self.execution_model.evaluate(
-                    signal,
-                    trade,
-                    yes_price_cents=yes_price_cents,
-                    no_price_cents=no_price_cents,
-                )
-                if decision.status != "filled" or decision.execution_price_cents is None:
-                    context.orders.append(
-                        BacktestOrder(
-                            timestamp=str(trade.get("created_time") or trade.get("ts") or ""),
-                            action=signal.action.lower(),
-                            quantity=quantize_count(signal.quantity),
-                            requested_limit_price_cents=signal.limit_price_cents,
-                            execution_price_cents=None,
-                            status=decision.status,
-                            reason=decision.reason,
-                            tag=signal.tag,
-                            note=signal.note,
-                        )
+                if isinstance(signal, PositionTargetSignal):
+                    self._process_position_target_signal(
+                        context,
+                        trade,
+                        signal,
+                        yes_price_cents=yes_price_cents,
+                        no_price_cents=no_price_cents,
                     )
                     continue
 
-                fee_cents = self._call_fee_model(
-                    self.fee_model,
-                    signal,
+                self._process_trade_signal(
+                    context,
                     trade,
-                    yes_price_cents,
-                    no_price_cents,
-                    decision.execution_price_cents,
-                )
-                context.execute(
                     signal,
-                    trade,
-                    execution_price_cents=decision.execution_price_cents,
-                    fee_cents=fee_cents,
-                )
-                context.orders.append(
-                    BacktestOrder(
-                        timestamp=str(trade.get("created_time") or trade.get("ts") or ""),
-                        action=signal.action.lower(),
-                        quantity=quantize_count(signal.quantity),
-                        requested_limit_price_cents=signal.limit_price_cents,
-                        execution_price_cents=decision.execution_price_cents,
-                        status=decision.status,
-                        fee_cents=fee_cents,
-                        reason=decision.reason,
-                        tag=signal.tag,
-                        note=signal.note,
-                    )
+                    yes_price_cents=yes_price_cents,
+                    no_price_cents=no_price_cents,
                 )
             last_mark = context.mark(
                 str(trade.get("created_time") or trade.get("ts") or ""),
@@ -503,7 +712,7 @@ class TradeBacktester:
     def run_on_historical_trades(
         self,
         ticker: str,
-        strategy: StrategyProtocol | Callable[[BacktestContext, dict[str, Any]], TradeSignal | Sequence[TradeSignal] | None],
+        strategy: StrategyProtocol | Callable[[BacktestContext, dict[str, Any]], StrategyResult],
         *,
         min_ts: Any | None = None,
         max_ts: Any | None = None,
