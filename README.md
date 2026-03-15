@@ -63,10 +63,10 @@ Legacy variables from the original repo are still supported:
 ## Quick Start
 
 ```python
-from mykalshi import market
+from mykalshi import discovery
 
-markets = market.get_markets(limit=5, status="open")
-print(markets["markets"][0]["ticker"])
+matches = discovery.search_markets(series_ticker="KXELONMARS", status="open", limit=1)
+print(matches[0]["market_ticker"])
 ```
 
 ```python
@@ -149,6 +149,7 @@ print(result.summary())
 - `mykalshi/client.py`: reusable HTTP client
 - `mykalshi/config.py`: environment and credential loading
 - `mykalshi/auth.py`: request signing helpers
+- `mykalshi/discovery.py`: targeted series, event, and market discovery helpers
 - `mykalshi/fixed_point.py`: Kalshi fixed-point conversion helpers
 - `mykalshi/orderbook.py`: shared order book normalization/state helpers
 - `mykalshi/historical.py`: historical data endpoints

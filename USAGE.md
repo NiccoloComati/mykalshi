@@ -41,6 +41,8 @@ from mykalshi.research import (
 
 Do not use literal placeholder strings like `"YOUR_TICKER"`. Pull a real market first.
 
+The higher-level helper for this is `mykalshi.discovery`.
+
 ### By series
 
 ```python
@@ -77,6 +79,29 @@ from mykalshi import market
 
 ticker = market.get_markets(limit=1, status="open")["markets"][0]["ticker"]
 print(ticker)
+```
+
+### Targeted discovery by series, event, or title
+
+```python
+from mykalshi import discovery
+
+markets = discovery.search_markets(
+    series_ticker="KXELONMARS",
+    status="open",
+    limit=5,
+)
+print(markets[0]["market_ticker"])
+```
+
+```python
+from mykalshi import discovery
+
+match = discovery.resolve_market(
+    event_ticker="KXELONMARS-99",
+    market_ticker_contains="KXELONMARS-99",
+)
+print(match["market_ticker"])
 ```
 
 ## 4. Live Market Data

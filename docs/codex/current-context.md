@@ -16,6 +16,7 @@ Turn `mykalshi` into a clean research and trading toolkit for Kalshi with four s
 - `mykalshi/config.py`: environment and credential loading
 - `mykalshi/auth.py`: request signing
 - `mykalshi/client.py`: reusable HTTP client
+- `mykalshi/discovery.py`: high-level series, event, and market discovery
 - `mykalshi/fixed_point.py`: shared fixed-point conversion helpers
 - `mykalshi/orderbook.py`: shared order book normalization and state tracking
 - `mykalshi/transport.py`: thin wrapper helpers plus cursor pagination
@@ -47,6 +48,7 @@ The foundation layer has been exercised in the local `.venv` on 2026-03-15.
 - live websocket capture into both SQLite and Parquet sinks passed
 - live historical-trade backtest path passed through `TradeBacktester.run_on_historical_trades(...)`
 - a user-facing workflow guide now exists in `USAGE.md`
+- live discovery queries passed for series search, market search, and exact market resolution
 
 ## Safety Note
 
@@ -55,7 +57,7 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 ## Next Implementation Slices
 
 1. Higher-level research helpers for replay and dataset loading.
-2. Broader channel coverage beyond orderbook capture.
+2. Broader websocket channel coverage beyond orderbook-first capture.
 3. Strategy examples and fee-model helpers for backtests.
 
 ## Recent Usability Notes
@@ -64,6 +66,7 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - For quick websocket smoke tests, use a real market ticker and `max_events=1`.
 - `market.*` and `historical.*` are intentionally separate because Kalshi splits live/recent data from archived data.
 - `tar_flow.py` and `his_flow.py` are now runnable local smoke-test scripts.
+- `discovery.*` is now the preferred starting point when the user wants to target a specific series, event, or market rather than pull arbitrary markets.
 
 ## Working Conventions
 
