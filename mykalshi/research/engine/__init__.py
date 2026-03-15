@@ -15,7 +15,7 @@ from .events import (
 from .execution import ExecutionDecision, ImmediateCompatibilityFillModel, KalshiBinaryFillModel, OrderbookAwareFillModel
 from .orders import OrderManager, SimulatedOrder
 from .portfolio import PortfolioState, PositionState
-from .reporting import BacktestRunResult, PerformanceTracker
+from .reporting import BacktestRunResult, MarketPerformanceSummary, PerformanceTracker, PositionSnapshot
 from .replay import HistoricalTradeReplay, MarketDataReplay, historical_trade_to_event, market_data_event_to_engine_event
 from .strategy import KalshiStrategy, StrategyContext
 
@@ -33,6 +33,7 @@ __all__ = [
     "MarkEvent",
     "MarketDataReplay",
     "MarketEvent",
+    "MarketPerformanceSummary",
     "MarketState",
     "OrderEvent",
     "OrderManager",
@@ -40,6 +41,7 @@ __all__ = [
     "OrderbookMarketEvent",
     "PerformanceTracker",
     "PortfolioState",
+    "PositionSnapshot",
     "PositionState",
     "SettlementEvent",
     "SimulatedOrder",

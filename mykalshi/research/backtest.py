@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from typing import Any, Callable, Iterable, Protocol, Sequence
 
 from .. import historical
 from ..fixed_point import dollars_to_cents, format_decimal, quantize_count
 from .datasets import load_replay_event_stream
+from .lifecycle import enrich_replay_events_with_market_lifecycle
 from .engine import (
     BacktestRunResult,
     EventDrivenBacktestEngine,
@@ -1024,6 +1026,21 @@ class ReplayBacktester:
         self.fee_model = fee_model
 
     @staticmethod
+    def enrich_replay_event_stream(
+        replay_events: Iterable[dict[str, Any]],
+        *,
+        market_metadata: dict[str, dict[str, Any]] | None = None,
+        metadata_resolver: Callable[[str], dict[str, Any] | None] | None = None,
+        reference_time: datetime | str | None = None,
+    ) -> list[dict[str, Any]]:
+        return enrich_replay_events_with_market_lifecycle(
+            replay_events,
+            market_metadata=market_metadata,
+            metadata_resolver=metadata_resolver,
+            reference_time=reference_time,
+        )
+
+    @staticmethod
     def _resolve_market_ticker(market_ticker: str | None, replay_events: Iterable[dict[str, Any]]) -> str | None:
         if market_ticker is not None:
             return market_ticker
@@ -1066,12 +1083,23 @@ class ReplayBacktester:
         strategy: KalshiStrategy,
         *,
         market_ticker: str | None = None,
+        enrich_market_lifecycle: bool = True,
+        market_metadata: dict[str, dict[str, Any]] | None = None,
+        metadata_resolver: Callable[[str], dict[str, Any] | None] | None = None,
+        reference_time: datetime | str | None = None,
         initial_cash_cents: int | float | str | Decimal = 0,
         initial_positions: dict[str, dict[str, Any]] | None = None,
         initial_yes_position: int | float | str | Decimal = 0,
         initial_no_position: int | float | str | Decimal = 0,
     ) -> BacktestRunResult:
         ordered_events = list(replay_events)
+        if enrich_market_lifecycle:
+            ordered_events = self.enrich_replay_event_stream(
+                ordered_events,
+                market_metadata=market_metadata,
+                metadata_resolver=metadata_resolver,
+                reference_time=reference_time,
+            )
         resolved_market_ticker = self._resolve_market_ticker(market_ticker, ordered_events)
         built_initial_positions = self._build_initial_positions(
             market_ticker=resolved_market_ticker,
@@ -1100,6 +1128,10 @@ class ReplayBacktester:
         market_ticker: str | None = None,
         include_replayed_orderbook_levels: bool = True,
         limit: int | None = None,
+        enrich_market_lifecycle: bool = True,
+        market_metadata: dict[str, dict[str, Any]] | None = None,
+        metadata_resolver: Callable[[str], dict[str, Any] | None] | None = None,
+        reference_time: datetime | str | None = None,
         initial_cash_cents: int | float | str | Decimal = 0,
         initial_positions: dict[str, dict[str, Any]] | None = None,
         initial_yes_position: int | float | str | Decimal = 0,
@@ -1118,6 +1150,10 @@ class ReplayBacktester:
             replay_events,
             strategy,
             market_ticker=market_ticker,
+            enrich_market_lifecycle=enrich_market_lifecycle,
+            market_metadata=market_metadata,
+            metadata_resolver=metadata_resolver,
+            reference_time=reference_time,
             initial_cash_cents=initial_cash_cents,
             initial_positions=initial_positions,
             initial_yes_position=initial_yes_position,

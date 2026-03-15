@@ -176,6 +176,17 @@ result = ReplayBacktester().run_on_captured_dataset(
 print(result.summary())
 ```
 
+Replay backtests now enrich missing expiration and settlement steps from Kalshi market metadata by default, and engine results expose richer analytics:
+
+```python
+print(result.market_summary("KXELONMARS-99").summary())
+print(result.position("KXELONMARS-99").summary())
+
+frames = result.to_dataframes()
+print(frames["fills"].head())
+print(frames["markets"].head())
+```
+
 Trade history can also be auto-routed across live and archived sources:
 
 ```python
@@ -252,6 +263,6 @@ The engine design note for this refactor lives in `docs/backtest-engine-architec
 ## Near-Term Roadmap
 
 - richer typed models instead of raw dicts
-- settlement and expiration enrichment for replay backtests
-- richer performance analytics and export helpers
+- higher-level research ergonomics around discovery, load, replay, and backtest workflows
+- richer market-family and settlement metadata for related-contract replay datasets
 - higher-level trading workflows with stronger safety rails

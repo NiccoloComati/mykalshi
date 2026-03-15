@@ -68,6 +68,11 @@ The foundation layer has been exercised in the local `.venv` on 2026-03-15.
   - live ticker replay through `MarketDataReplay`
 - live historical wrapper dry run passed through `TradeBacktester.run_on_historical_trades(...)` after the compatibility migration
 - local replay-wrapper dry runs passed through `ReplayBacktester.run_on_replay_event_stream(...)` and `run_on_captured_dataset(...)`
+- local replay-lifecycle enrichment dry runs passed through `ReplayBacktester.enrich_replay_event_stream(...)`
+- local reporting/export dry runs passed through:
+  - `BacktestRunResult.market_summaries()`
+  - `BacktestRunResult.position(...)`
+  - `BacktestRunResult.to_dataframes()`
 
 ## Safety Note
 
@@ -75,9 +80,9 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 
 ## Next Implementation Slices
 
-1. Add richer settlement sourcing and expiration metadata from Kalshi market state when replay data is incomplete.
-2. Expand performance and portfolio analytics on top of the unified engine path.
-3. Improve higher-level research ergonomics around discovery, load, replay, and backtest workflows.
+1. Improve higher-level research ergonomics around discovery, load, replay, and backtest workflows.
+2. Add richer market-family and settlement metadata handling where replayed datasets span related contracts.
+3. Expand live trading workflows and safety rails on top of the now-stronger research/backtest core.
 
 ## Recent Usability Notes
 
@@ -98,6 +103,8 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - strategies can now set per-order `latency_events` to delay fill eligibility by replay events for deterministic latency simulation.
 - `research.datasets` now provides merged replay helpers so stored ticker/trade and reconstructed orderbook streams can be loaded into one ordered event timeline for engine replay.
 - `research.ReplayBacktester` is now the preferred high-level entry point for backtests over stored replay datasets.
+- `research.ReplayBacktester` now enriches replay timelines with synthetic expiration/settlement events from Kalshi market metadata when replayed data is incomplete.
+- `research.engine.BacktestRunResult` now exposes position snapshots, per-market summaries, turnover/exposure metrics, and dataframe export helpers.
 - `research.capture_market_data_sync(...)` is now the preferred entry point for live ticker/trade websocket collection.
 - `routing.get_trades_auto(...)` is now the preferred entry point when code should not need to manually split live and archived trade sources.
 

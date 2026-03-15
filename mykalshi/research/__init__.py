@@ -22,6 +22,7 @@ from .datasets import (
     orderbook_events_to_dataframe,
     replay_orderbook_events,
 )
+from .lifecycle import enrich_replay_events_with_market_lifecycle, resolve_replay_market_metadata
 from .engine import (
     BacktestRunResult,
     CancelRequest,
@@ -31,8 +32,10 @@ from .engine import (
     KalshiBinaryFillModel,
     OrderbookAwareFillModel,
     KalshiStrategy,
+    MarketPerformanceSummary,
     MarketDataReplay,
     OrderRequest,
+    PositionSnapshot,
     StrategyContext,
 )
 from .storage import (
@@ -69,6 +72,7 @@ __all__ = [
     "KalshiStrategy",
     "KalshiMakerTakerFeeModel",
     "KalshiTakerFeeModel",
+    "MarketPerformanceSummary",
     "MarketDataReplay",
     "MultiMarketDataSink",
     "MultiOrderbookSink",
@@ -76,6 +80,7 @@ __all__ = [
     "ParquetMarketDataSink",
     "ParquetOrderbookSink",
     "PositionTargetSignal",
+    "PositionSnapshot",
     "ProbabilityEdgeStrategy",
     "ReplayBacktester",
     "SQLiteMarketDataSink",
@@ -88,6 +93,7 @@ __all__ = [
     "ZeroFeeModel",
     "build_ticker_event",
     "build_trade_event",
+    "enrich_replay_events_with_market_lifecycle",
     "load_market_data_events",
     "load_historical_trades",
     "load_orderbook_events",
@@ -97,6 +103,7 @@ __all__ = [
     "normalize_market_data_message",
     "orderbook_events_to_dataframe",
     "replay_orderbook_events",
+    "resolve_replay_market_metadata",
     "target_flat",
     "target_no",
     "target_yes",

@@ -405,6 +405,31 @@ result = ReplayBacktester().run_on_replay_event_stream(
 print(result.summary())
 ```
 
+Replay backtests now enrich missing expiration and settlement events from Kalshi market metadata by default. That is what you want for real captured datasets, but if you are testing with synthetic tickers, disable it explicitly:
+
+```python
+result = ReplayBacktester().run_on_replay_event_stream(
+    timeline,
+    BuyFirstQuoteStrategy(),
+    enrich_market_lifecycle=False,
+    initial_cash_cents=10000,
+)
+```
+
+The replay result object also exposes richer analytics and export helpers:
+
+```python
+market_view = result.market_summary("KXELONMARS-99")
+position_view = result.position("KXELONMARS-99")
+
+print(market_view.summary())
+print(position_view.summary())
+
+frames = result.to_dataframes()
+print(frames["fills"].head())
+print(frames["markets"].head())
+```
+
 ## 11. Auto-Route Live And Historical Trades
 
 ```python

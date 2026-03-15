@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any, Iterable
 
 from ...fixed_point import dollars_to_cents, quantize_count
-from .events import MarketEvent, OrderbookMarketEvent, TickerMarketEvent, TradeMarketEvent
+from .events import MarketEvent, OrderbookMarketEvent, SettlementEvent, TickerMarketEvent, TradeMarketEvent
 
 
 def _event_sort_key(event: MarketEvent) -> tuple[str, str, int]:
@@ -124,6 +124,18 @@ def market_data_event_to_engine_event(event: dict[str, Any]) -> MarketEvent | No
             best_no_ask_cents=event.get("best_no_ask_cents"),
             yes_levels=_level_tuples(event.get("yes_levels")),
             no_levels=_level_tuples(event.get("no_levels")),
+        )
+
+    if channel == "settlement" or event_type == "settlement":
+        return SettlementEvent(
+            timestamp=timestamp,
+            event_type="settlement",
+            market_ticker=market_ticker,
+            sequence=sequence,
+            raw_data=raw_data,
+            yes_payout_cents=event.get("yes_payout_cents"),
+            no_payout_cents=event.get("no_payout_cents"),
+            reason=event.get("reason"),
         )
 
     return None
