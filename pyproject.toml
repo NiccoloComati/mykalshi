@@ -25,6 +25,7 @@ analysis = [
 ]
 storage = [
   "boto3>=1.34.0",
+  "pyarrow>=18.0.0",
 ]
 websocket = [
   "websockets>=14.1",
