@@ -31,5 +31,8 @@ websocket = [
   "websockets>=14.1",
 ]
 
+[project.scripts]
+mykalshi = "mykalshi.cli:main"
+
 [tool.setuptools.packages.find]
 include = ["mykalshi*"]

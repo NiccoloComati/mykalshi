@@ -19,6 +19,12 @@ Activate the local virtual environment and install editable dependencies:
 pip install -e .[analysis,storage,websocket]
 ```
 
+That editable install now also exposes the `mykalshi` console command:
+
+```powershell
+mykalshi --help
+```
+
 Your root `.env` currently resolves to production, so authenticated calls hit the live account unless you switch `KALSHI_ENV=demo`.
 
 The client now rate-limits requests centrally. By default it also auto-detects your account's current Kalshi `read_limit` and `write_limit` from `/account/limits`.
@@ -72,6 +78,12 @@ You can also use one generic query across series, event, and market context:
 session = ResearchSession()
 matches = session.search_markets(query="elon mars", status="open", limit=5)
 print(matches[0].summary())
+```
+
+There is now a CLI for the same discovery flow:
+
+```powershell
+mykalshi discover markets --query "elon mars" --status open --limit 5
 ```
 
 ### By series
@@ -603,6 +615,76 @@ Two important safety behaviors to keep in mind:
 - `cancel_order(...)` and `cancel_stale_orders(...)` can be dry-run planned before you execute them.
 - order submission, amendment, replacement, and flattening are blocked on production unless `allow_production_writes=True` or `dry_run=True`.
 
+## 12A. CLI Workflows
+
+The CLI is meant to cover the same higher-level flows without needing scratch scripts for normal usage.
+
+### Discover
+
+```powershell
+mykalshi discover series --query "elon mars" --limit 5
+mykalshi discover events --series-ticker HIGHMIA --status open --limit 3
+mykalshi discover markets --query "mars" --status open --limit 3
+mykalshi discover universes --query "mars" --status open --limit 3
+```
+
+### Capture
+
+```powershell
+mykalshi capture market-data --channels ticker trade --market-ticker KXELONMARS-99 --send-initial-snapshot --max-events 2
+mykalshi capture orderbook KXELONMARS-99 --max-events 1
+```
+
+You can also attach sinks directly from the CLI:
+
+```powershell
+mykalshi capture market-data --channels ticker --market-ticker KXELONMARS-99 --sqlite-path data\market-data.sqlite --parquet-dir data\market-data-parquet --max-events 1
+```
+
+### Replay Summary
+
+```powershell
+mykalshi replay summary --market-data-source data\market-data.sqlite --orderbook-source data\orderbook.sqlite --market-ticker KXELONMARS-99
+```
+
+### Backtests
+
+The CLI strategy loader accepts import paths like `module.submodule:ClassName` or `module.submodule:function_name`.
+
+Historical example:
+
+```powershell
+mykalshi backtest historical KXWTAIWO-25ANDSWI-AND --strategy tests.cli_fixtures:historical_strategy --initial-cash-cents 10000
+```
+
+Replay example:
+
+```powershell
+mykalshi backtest replay --market-data-source data\market-data.sqlite --market-ticker KXELONMARS-99 --strategy tests.cli_fixtures:DemoReplayStrategy --initial-cash-cents 10000
+```
+
+### Trading
+
+Read-only account snapshot:
+
+```powershell
+mykalshi trading snapshot
+mykalshi trading market KXELONMARS-99
+```
+
+Dry-run order planning is the default for mutation commands:
+
+```powershell
+mykalshi trading plan-order KXELONMARS-99 --action buy --side yes --quantity 1 --limit-price-cents 35
+mykalshi trading cancel-stale --max-age-seconds 300
+```
+
+To actually execute a trading write, you must opt in explicitly:
+
+```powershell
+mykalshi trading plan-order KXELONMARS-99 --action buy --side yes --quantity 1 --limit-price-cents 35 --allow-production-writes --execute
+```
+
 ## 13. What Broke In Your Terminal
 
 ### `historical.get_historical_trades(ticker="YOUR_TICKER", ...)`
@@ -625,9 +707,10 @@ Same issue as historical trades above: the placeholder ticker was not real.
 
 ## 14. Current Limits
 
-This repo is usable, but not yet polished into a single “app” with one command or one end-to-end workflow.
+This repo is usable, and it now has a real CLI, but it is still not a fully polished end-user platform.
 
 Missing pieces still include:
 
 - more websocket channels beyond orderbook-first capture
-- a CLI
+- richer market-family and settlement metadata across related contracts
+- more advanced live execution controls on top of the new trading workflow layer

@@ -29,6 +29,12 @@ Research/data stack:
 pip install .[analysis,storage,websocket]
 ```
 
+The package now installs a `mykalshi` console command:
+
+```bash
+mykalshi --help
+```
+
 Or use the included `requirements.txt`:
 
 ```bash
@@ -85,6 +91,13 @@ The same session layer now supports broader query-style discovery:
 ```python
 universes = session.search_market_universes(query="mars", status="open", limit=3)
 print(universes[0].summary())
+```
+
+There is now also a CLI over discovery, capture, replay, backtest, and trading workflows:
+
+```bash
+mykalshi discover markets --query "elon mars" --status open --limit 3
+mykalshi trading snapshot
 ```
 
 ```python

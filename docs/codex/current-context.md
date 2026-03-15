@@ -30,6 +30,7 @@ Turn `mykalshi` into a clean research and trading toolkit for Kalshi with four s
 - `mykalshi/research/datasets.py`: load and replay helpers for stored order book datasets
 - `mykalshi/routing.py`: live/historical trade auto-routing
 - `mykalshi/trading_workflows.py`: higher-level trading state snapshots, execution helpers, and safety rails
+- `mykalshi/cli.py`: user-facing CLI over discovery, capture, replay, backtest, and trading workflows
 - `mykalshi/market.py`, `trading.py`, `exchange.py`, `events.py`, `communications.py`: endpoint wrappers
 
 ## Verified State
@@ -90,6 +91,13 @@ The foundation layer has been exercised in the local `.venv` on 2026-03-15.
   - `TradingSession.buy_yes(..., dry_run=True)`
   - production write blocking via `TradingSession.buy_yes(...)`
   - `TradingSession.cancel_stale_orders(..., dry_run=True)`
+- live CLI checks passed through:
+  - `python -m mykalshi discover markets --status open --limit 1`
+  - `python -m mykalshi trading snapshot`
+  - `python -m mykalshi capture market-data --channels ticker --market-ticker ... --send-initial-snapshot --max-events 1`
+  - `python -m mykalshi trading plan-order ...` in dry-run mode
+  - `python -m mykalshi backtest historical ... --strategy tests.cli_fixtures:historical_strategy`
+  - installed console script `mykalshi --help`
 
 ## Safety Note
 
@@ -97,7 +105,7 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 
 ## Next Implementation Slices
 
-1. Add a user-facing CLI over the now-stronger discovery, replay/backtest, and trading workflow layers.
+1. Expand the CLI into richer end-to-end workflows so common research loops need less manual wiring.
 2. Add richer market-family and settlement metadata handling where replayed datasets span related contracts.
 3. Extend the trading workflow layer with more advanced execution controls only after CLI and end-to-end ergonomics improve.
 
@@ -132,6 +140,9 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - `trading_workflows.TradingSession` is now the preferred higher-level entry point for coherent account state snapshots and safer live-order workflows.
 - `trading_workflows.TradingSafetyPolicy` now provides dry-run mode, production write blocking, order-size/risk caps, open-order caps, allowed/blocked ticker controls, and JSONL audit logging.
 - `trading_workflows` now provides higher-level helpers for market context, order submission, amend, replace, stale-order cancellation, and position flattening.
+- `cli.py` now provides a real `mykalshi` command surface over discovery, websocket capture, replay inspection, historical/replay backtests, and trading workflow helpers.
+- the CLI strategy loader accepts Python import paths like `module.submodule:ClassName` or `module.submodule:function_name`.
+- trading mutation commands in the CLI default to dry-run planning and require `--execute` for live writes.
 
 ## Working Conventions
 
