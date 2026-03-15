@@ -25,6 +25,7 @@ Turn `mykalshi` into a clean research and trading toolkit for Kalshi with four s
 - `mykalshi/research/websocket.py`: authenticated websocket capture for order book snapshots and deltas
 - `mykalshi/research/storage.py`: SQLite and Parquet sinks for captured order book events
 - `mykalshi/research/backtest.py`: historical-trade backtest engine and strategy callback API
+- `mykalshi/research/datasets.py`: load and replay helpers for stored order book datasets
 - `mykalshi/market.py`, `trading.py`, `exchange.py`, `events.py`, `communications.py`: endpoint wrappers
 
 ## Verified State
@@ -49,6 +50,7 @@ The foundation layer has been exercised in the local `.venv` on 2026-03-15.
 - live historical-trade backtest path passed through `TradeBacktester.run_on_historical_trades(...)`
 - a user-facing workflow guide now exists in `USAGE.md`
 - live discovery queries passed for series search, market search, and exact market resolution
+- live capture-to-SQLite load/replay round-trip passed
 
 ## Safety Note
 
@@ -56,9 +58,9 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 
 ## Next Implementation Slices
 
-1. Higher-level research helpers for replay and dataset loading.
-2. Broader websocket channel coverage beyond orderbook-first capture.
-3. Strategy examples and fee-model helpers for backtests.
+1. Broader websocket channel coverage beyond orderbook-first capture.
+2. Strategy examples and fee-model helpers for backtests.
+3. Higher-level historical/live auto-routing helpers.
 
 ## Recent Usability Notes
 

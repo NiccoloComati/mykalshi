@@ -173,7 +173,12 @@ class ParquetOrderbookSink:
     def close(self) -> None:
         self.flush()
 
-    def load_events(self) -> list[dict[str, Any]]:
+    def load_events(
+        self,
+        *,
+        market_ticker: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
         try:
             import pyarrow.dataset as ds
         except ImportError as exc:
@@ -183,7 +188,12 @@ class ParquetOrderbookSink:
 
         dataset = ds.dataset(self.directory, format="parquet")
         rows = dataset.to_table().to_pylist()
-        return [_deserialize_event(row) for row in rows]
+        events = [_deserialize_event(row) for row in rows]
+        if market_ticker is not None:
+            events = [event for event in events if event.get("market_ticker") == market_ticker]
+        if limit is not None:
+            events = events[:limit]
+        return events
 
     def __enter__(self) -> "ParquetOrderbookSink":
         return self

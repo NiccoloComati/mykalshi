@@ -213,7 +213,17 @@ parquet_sink.close()
 print(len(events))
 ```
 
-## 8. Backtesting On Archived Trades
+## 8. Load And Replay Stored Orderbook Data
+
+```python
+from mykalshi.research import load_orderbook_events, replay_orderbook_events
+
+events = load_orderbook_events("data/orderbook.sqlite")
+timeline = replay_orderbook_events(events)
+print(timeline[0]["event_type"])
+```
+
+## 9. Backtesting On Archived Trades
 
 Use a real archived ticker, not a placeholder.
 
@@ -237,7 +247,7 @@ result = TradeBacktester().run_on_historical_trades(
 print(result.summary())
 ```
 
-## 9. Trading
+## 10. Trading
 
 Trading/account calls live under `mykalshi.trading`.
 
@@ -252,7 +262,7 @@ print(trading.get_orders(limit=10))
 
 Because your current config is production, do not place/cancel/amend orders unless that is intentional.
 
-## 10. What Broke In Your Terminal
+## 11. What Broke In Your Terminal
 
 ### `historical.get_historical_trades(ticker="YOUR_TICKER", ...)`
 
@@ -272,7 +282,7 @@ For a smoke test, use a real market ticker and `max_events=1`.
 
 Same issue as historical trades above: the placeholder ticker was not real.
 
-## 11. Current Limits
+## 12. Current Limits
 
 This repo is usable, but not yet polished into a single “app” with one command or one end-to-end workflow.
 

@@ -126,6 +126,15 @@ parquet_sink = ParquetOrderbookSink("data/parquet")
 sink = MultiOrderbookSink(sqlite_sink, parquet_sink)
 ```
 
+Captured datasets can then be loaded and replayed:
+
+```python
+from mykalshi.research import load_orderbook_events, replay_orderbook_events
+
+events = load_orderbook_events("data/orderbook.sqlite")
+timeline = replay_orderbook_events(events)
+```
+
 Simple historical-trade backtests can now run without notebook CSV glue:
 
 ```python
