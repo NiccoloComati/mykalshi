@@ -28,7 +28,10 @@ The main modules are:
 ```python
 from mykalshi import market, historical, events, trading
 from mykalshi.research import (
+    EventDrivenBacktestEngine,
+    HistoricalTradeReplay,
     KalshiWebsocketClient,
+    KalshiStrategy,
     MultiOrderbookSink,
     ParquetOrderbookSink,
     PositionTargetSignal,
@@ -325,6 +328,35 @@ strategy = ThresholdSignalStrategy(
     target_quantity=1,
 )
 ```
+
+## 10A. Event-Driven Backtests
+
+The newer engine path is event-driven and keeps replay, order handling, fills, portfolio state, and reporting separate.
+
+```python
+from mykalshi.research import EventDrivenBacktestEngine, HistoricalTradeReplay, KalshiStrategy
+
+class DemoStrategy(KalshiStrategy):
+    def on_trade(self, context, event):
+        if event.yes_price_cents <= 40 and not context.open_orders(event.market_ticker):
+            context.buy_yes(event.market_ticker, quantity=1, limit_price_cents=41)
+
+engine = EventDrivenBacktestEngine(initial_cash_cents=10000)
+replay = HistoricalTradeReplay.from_trade_dicts(archived_trades)
+result = engine.run(replay, DemoStrategy())
+print(result.summary())
+```
+
+The strategy context exposes:
+
+- `market(...)`
+- `position(...)`
+- `open_orders(...)`
+- `buy_yes(...)`, `sell_yes(...)`, `buy_no(...)`, `sell_no(...)`
+- `cancel(order_id)`
+- `log(...)`
+
+Stored websocket datasets can also be replayed through the same engine with `MarketDataReplay`.
 
 ## 11. Auto-Route Live And Historical Trades
 

@@ -184,6 +184,21 @@ result = TradeBacktester().run_on_historical_trades(
 print(result.summary())
 ```
 
+There is also a lower-level event-driven engine for more realistic replay flows:
+
+```python
+from mykalshi.research import EventDrivenBacktestEngine, HistoricalTradeReplay, KalshiStrategy
+
+class DemoStrategy(KalshiStrategy):
+    def on_trade(self, context, event):
+        if event.yes_price_cents <= 40 and not context.open_orders(event.market_ticker):
+            context.buy_yes(event.market_ticker, quantity=1, limit_price_cents=41)
+
+engine = EventDrivenBacktestEngine(initial_cash_cents=10000)
+result = engine.run(HistoricalTradeReplay.from_trade_dicts(trades), DemoStrategy())
+print(result.summary())
+```
+
 ## Layout
 
 - `mykalshi/client.py`: reusable HTTP client
@@ -195,6 +210,7 @@ print(result.summary())
 - `mykalshi/historical.py`: historical data endpoints
 - `mykalshi/recorder.py`: order book capture utilities
 - `mykalshi/research/`: websocket capture, storage sinks, backtest helpers, and reusable strategies
+- `mykalshi/research/engine/`: event-driven backtest engine components
 - `mykalshi/routing.py`: live/historical auto-routing helpers
 - `mykalshi/market.py`, `events.py`, `trading.py`, `communications.py`, `exchange.py`: endpoint wrappers
 
@@ -205,6 +221,8 @@ Persistent handoff notes for future Codex runs live under `docs/codex/`. The act
 ## Usage
 
 Concrete workflows and runnable examples live in `USAGE.md`.
+
+The engine design note for this refactor lives in `docs/backtest-engine-architecture.md`.
 
 ## Near-Term Roadmap
 
