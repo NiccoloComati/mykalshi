@@ -155,6 +155,7 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - `notebooks/main_current.ipynb` is now the current-code replacement for the old exploratory notebook, using live discovery, current orderbook normalization, session capture, and replay backtests.
 - `notebooks/main_current.ipynb` now bootstraps the kernel explicitly: it resolves the repo root onto `sys.path` and raises a clear `%pip install -e "...[analysis,storage,websocket]"` instruction when the active notebook kernel is missing analysis dependencies.
 - `notebooks/main_current.ipynb` now targets a dedicated `mykalshi (.venv)` kernelspec, and `ipykernel` is included in the `analysis` extra so editable installs expose a notebook-capable repo environment instead of relying on an external kernel guess.
+- `notebooks/main_current.ipynb` now also falls back to the repo `.venv` site-packages when VS Code/Jupyter opens it under a non-venv Python 3.11 kernel, so notebook imports still work while making the kernel mismatch explicit.
 - the CLI strategy loader accepts Python import paths like `module.submodule:ClassName` or `module.submodule:function_name`.
 - trading mutation commands in the CLI default to dry-run planning and require `--execute` for live writes.
 
