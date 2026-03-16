@@ -110,6 +110,12 @@ The foundation layer has been exercised in the local `.venv` on 2026-03-15.
   - lightweight presidential trade previews through `routing.get_trades_preview_dataframe_auto(...)`
   - authenticated orderbook access from the `notebooks/` working directory
   - session capture inside a running notebook-style event loop
+- notebook output-stabilization smoke passed for:
+  - presidential event cells with cached/retried full-market history loads
+  - tested-market setup and `KXNBA-25-IND` candlestick inspection cell
+  - LOB snapshot and LOB plot cells with dynamic market selection
+  - climate/weather series, events, and open-markets cells
+  - guarded IMDB appendix cells when `beautifulsoup4` is absent
 
 ## Safety Note
 
@@ -170,6 +176,12 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - `market.get_market_orderbook(...)` now includes a legacy-compatible `orderbook` key alongside the current `orderbook_fp` payload.
 - `market.candlesticks_to_df(...)`, `market.build_candlestick(...)`, and `events.event_info(...)` now normalize current Kalshi fixed-point and dollar-denominated payload fields into the notebook-friendly shapes used by the old analysis code.
 - `routing.get_trades_preview_auto(...)` and `routing.get_trades_preview_dataframe_auto(...)` now provide light trade samples without forcing full historical pulls in notebook analyses.
+- `notebooks/main_current.ipynb` now suppresses the large cached market-snapshot `DtypeWarning` by reading the CSV with `low_memory=False`.
+- the notebook now caches and retries repeated `get_full_market(...)` loads at the notebook layer, which keeps the presidential and tested-market cells from failing on transient `429 too_many_requests` responses.
+- the tested-markets setup cell now lazy-loads full candlestick histories only when a later cell actually needs them instead of fetching all six histories eagerly.
+- the notebook now prefers a quoted market for the LOB section and falls back more gracefully when the chosen live market only shows one side of the book.
+- the climate/weather cells now reuse a shared `429` retry helper and a clean city-extraction helper.
+- the guarded IMDB appendix now returns the parsed rating distribution correctly when `beautifulsoup4` is installed.
 - the CLI strategy loader accepts Python import paths like `module.submodule:ClassName` or `module.submodule:function_name`.
 - trading mutation commands in the CLI default to dry-run planning and require `--execute` for live writes.
 

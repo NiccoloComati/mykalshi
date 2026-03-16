@@ -43,6 +43,8 @@ set_cell(
     import os
     import site
     import tempfile
+    import time
+    import warnings
     from datetime import datetime, timezone
     from pathlib import Path
 
@@ -86,6 +88,7 @@ set_cell(
 
     from mykalshi import events, formatting, market, routing, trading, communications, exchange
     from mykalshi.config import KalshiConfig
+    from mykalshi.exceptions import KalshiHTTPError
     from mykalshi.recorder import MarketLOBRecorder
     import pandas as pd
     import numpy as np
@@ -124,6 +127,19 @@ set_cell(
         files = sorted(PROJECT_ROOT.glob("all_markets_*.csv"), key=lambda path: path.stat().st_mtime)
         return files[-1] if files else None
 
+    MARKET_HISTORY_CACHE = {}
+
+    def retry_on_429(label: str, func, *, max_retries: int = 4, base_backoff_seconds: float = 1.0):
+        for attempt in range(1, max_retries + 1):
+            try:
+                return func()
+            except KalshiHTTPError as exc:
+                if exc.status_code != 429 or attempt >= max_retries:
+                    raise
+                sleep_seconds = base_backoff_seconds * attempt
+                print(f"Rate limited while loading {label}; retrying in {sleep_seconds:.1f}s...")
+                time.sleep(sleep_seconds)
+
     def normalize_market_frame(frame: pd.DataFrame) -> pd.DataFrame:
         frame = frame.copy()
         if frame.empty:
@@ -151,7 +167,9 @@ set_cell(
         snapshot_path = latest_market_snapshot_path()
         if snapshot_path is not None:
             print(f"Loaded market snapshot from {snapshot_path.name}")
-            return normalize_market_frame(pd.read_csv(snapshot_path))
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=pd.errors.DtypeWarning)
+                return normalize_market_frame(pd.read_csv(snapshot_path, low_memory=False))
         print("No cached all-market CSV found; falling back to a sampled live pull.")
         sampled = pd.json_normalize(market.get_all_markets(batch_size=100, max_items=500))
         return normalize_market_frame(sampled)
@@ -160,14 +178,77 @@ set_cell(
         payload = pd.json_normalize(market.get_all_markets(status="open", batch_size=100, max_items=limit))
         return normalize_market_frame(payload)
 
-    def pick_lob_market(open_markets: pd.DataFrame) -> str:
+    def pick_lob_market(open_markets: pd.DataFrame, probe_limit: int = 20) -> str:
         explicit = os.getenv("MYKALSHI_NOTEBOOK_LOB_TICKER")
         if explicit:
             return explicit
         sortable = open_markets.copy()
         if "volume" in sortable.columns:
             sortable = sortable.sort_values(["volume", "ticker"], ascending=[False, True])
-        return str(sortable.iloc[0]["ticker"])
+        fallback = str(sortable.iloc[0]["ticker"])
+        quoted = sortable
+        if {"yes_bid", "yes_ask"}.issubset(sortable.columns):
+            quoted = sortable[sortable["yes_bid"].notna() & sortable["yes_ask"].notna()]
+            if not AUTH_AVAILABLE and not quoted.empty:
+                return str(quoted.iloc[0]["ticker"])
+        if not AUTH_AVAILABLE:
+            return fallback
+
+        best_one_sided = None
+        candidates = list(quoted["ticker"].head(probe_limit)) if not quoted.empty else []
+        seen = set(str(ticker) for ticker in candidates)
+        candidates.extend(
+            str(ticker) for ticker in sortable["ticker"].head(probe_limit * 2)
+            if str(ticker) not in seen
+        )
+        for ticker in candidates:
+            try:
+                orderbook = market.get_market_orderbook(str(ticker)).get("orderbook", {})
+            except Exception:
+                continue
+            yes_levels = orderbook.get("yes", [])
+            no_levels = orderbook.get("no", [])
+            if yes_levels and no_levels:
+                return str(ticker)
+            if (yes_levels or no_levels) and best_one_sided is None:
+                best_one_sided = str(ticker)
+
+        return best_one_sided or fallback
+
+    def load_full_market_cached(
+        series_ticker: str,
+        ticker: str,
+        period_interval: str,
+        *,
+        start_ts: str | None = None,
+        end_ts: str | None = None,
+        max_retries: int = 4,
+        base_backoff_seconds: float = 1.0,
+    ):
+        cache_key = (series_ticker, ticker, period_interval, start_ts, end_ts)
+        if cache_key in MARKET_HISTORY_CACHE:
+            return MARKET_HISTORY_CACHE[cache_key]
+
+        result = retry_on_429(
+            ticker,
+            lambda: market.get_full_market(
+                series_ticker=series_ticker,
+                ticker=ticker,
+                period_interval=period_interval,
+                start_ts=start_ts,
+                end_ts=end_ts,
+            ),
+            max_retries=max_retries,
+            base_backoff_seconds=base_backoff_seconds,
+        )
+        MARKET_HISTORY_CACHE[cache_key] = result
+        return result
+
+    def extract_city_from_text(series: pd.Series) -> pd.Series:
+        return series.astype(str).str.extract(
+            r'in\s+(.+?)(?=\s+(?:on|today|tomorrow|yesterday)\b|[?]|$)',
+            expand=False,
+        ).str.strip()
     ''',
 )
 
@@ -192,7 +273,9 @@ set_cell(nb, 9, '''
 results = {}
 
 for mkt in out["markets"]["market_ticker"].values:
-    cs_df = market.candlesticks_to_df(market.get_full_market(series_ticker="PRES", ticker=mkt, period_interval='h', end_ts='11/10/2024'))[['end_period', 'yes_ask_close', 'yes_bid_close', 'volume']]
+    cs_df = market.candlesticks_to_df(
+        load_full_market_cached(series_ticker="PRES", ticker=mkt, period_interval='h', end_ts='11/10/2024')
+    )[['end_period', 'yes_ask_close', 'yes_bid_close', 'volume']]
 
     cs_df['end_period'] = pd.to_datetime(cs_df['end_period'])
     cs_df['date'] = cs_df['end_period']
@@ -236,14 +319,14 @@ results_df
 ''')
 
 set_cell(nb, 11, '''
-pres_djt_data = market.get_full_market(
+pres_djt_data = load_full_market_cached(
     series_ticker="PRES",
     ticker="PRES-2024-DJT",
     end_ts="11/10/2024",
     period_interval='d'
 )
 
-pres_kh_data = market.get_full_market(
+pres_kh_data = load_full_market_cached(
     series_ticker="PRES",
     ticker="PRES-2024-KH",
     end_ts="11/10/2024",
@@ -261,11 +344,13 @@ fig, axes = mpf.plot(
     figratio=(20, 10),
     figscale=1.8,
     show_nontrading=False,
+    mav=3 * 24,
     returnfig=True,
     type='candle',
 )
-axes[0].axhline(y=50, color='red', linestyle='--', linewidth=1)
-axes[0].axvline(x=datetime(2024, 2, 3), color='blue', linestyle='--', linewidth=1)
+_ = axes[0].axhline(y=50, color='red', linestyle='--', linewidth=1)
+_ = axes[0].axvline(x=datetime.strptime('Feb 3 1970 00:00', '%b %d %Y %H:%M'), color='blue', linestyle='--', linewidth=1)
+plt.show()
 
 fig, axes = mpf.plot(
     djt_candlestick_df,
@@ -273,11 +358,13 @@ fig, axes = mpf.plot(
     figratio=(20, 10),
     figscale=1.8,
     show_nontrading=False,
+    mav=3 * 24,
     returnfig=True,
     type='candle',
 )
-axes[0].axhline(y=50, color='red', linestyle='--', linewidth=1)
-axes[0].axvline(x=datetime(2024, 2, 3), color='blue', linestyle='--', linewidth=1)
+_ = axes[0].axhline(y=50, color='red', linestyle='--', linewidth=1)
+_ = axes[0].axvline(x=datetime.strptime('Feb 3 1970 00:00', '%b %d %Y %H:%M'), color='blue', linestyle='--', linewidth=1)
+plt.show()
 ''')
 
 set_cell(nb, 13, '''
@@ -292,9 +379,19 @@ tested_markets = {'PRES-2024-KH': 'Will Kamala Harris or another Democrat win th
 market_vals = {}
 trades_record = {}
 
+def ensure_tested_market_history(ticker, period_interval='h'):
+    if ticker not in market_vals:
+        market_vals[ticker] = load_full_market_cached(
+            series_ticker=ticker.split('-')[0],
+            ticker=ticker,
+            period_interval=period_interval,
+        )['candlesticks']
+    return market_vals[ticker]
+
 for ticker in tested_markets.keys():
-    market_vals[ticker] = market.get_full_market(series_ticker=ticker.split('-')[0], ticker=ticker, period_interval='h')
     trades_record[ticker] = routing.get_trades_preview_dataframe_auto(ticker, limit=25)
+
+ensure_tested_market_history('KXNBA-25-IND')
 ''')
 
 set_cell(nb, 14, '''
@@ -320,6 +417,9 @@ yes_bids = sorted(orderbook["yes"], key=lambda x: x[0])
 yes_asks = sorted([[100 - price, size] for price, size in orderbook["no"]], key=lambda x: x[0])
 
 print()
+print(f"Ticker: {LOB_MARKET_TICKER}")
+if not yes_bids and not yes_asks:
+    print("No visible YES-side depth in the current book snapshot.")
 print("Bids:")
 for price, qty in yes_bids:
     print(f"  YES @ {price}c x {qty:,.2f} contracts")
@@ -339,6 +439,11 @@ def get_market_lob(ticker):
     yes_asks = sorted([[100 - price, size] for price, size in orderbook["no"]], key=lambda x: x[0])
 
     print()
+    print(f"Ticker: {ticker}")
+    if not yes_bids and not yes_asks:
+        print("No visible YES-side depth in the current book snapshot.")
+        return {"yes_bids": yes_bids, "yes_asks": yes_asks}
+
     print("Bids:")
     for price, qty in yes_bids:
         print(f"  YES @ {price}c x {qty:,.2f} contracts")
@@ -346,6 +451,8 @@ def get_market_lob(ticker):
     print("Asks:")
     for price, qty in yes_asks:
         print(f"  YES @ {price}c x {qty:,.2f} contracts")
+
+    return {"yes_bids": yes_bids, "yes_asks": yes_asks}
 
 def plot_market_lob(ticker):
     orderbook = market.get_market_orderbook(ticker=ticker)["orderbook"]
@@ -361,6 +468,17 @@ def plot_market_lob(ticker):
     bid_cum = list(np.cumsum(bid_sizes[::-1]))[::-1] if bid_sizes else []
 
     plt.figure(figsize=(10, 6))
+    if not bid_prices and not ask_prices:
+        plt.text(0.5, 0.5, f"No visible YES-side depth for {ticker}", ha="center", va="center", transform=plt.gca().transAxes)
+        plt.xlim(0, 100)
+        plt.ylim(0, 1)
+        plt.xlabel("Price (c)")
+        plt.ylabel("Cumulative Size")
+        plt.title("YES Order Book Depth")
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
+        return
     if bid_prices:
         bid_prices_ext = bid_prices + [bid_prices[-1]]
         bid_cum_ext = bid_cum + [0]
@@ -759,19 +877,29 @@ set_cell(nb, 62, 'weather_series_dict = WEATHER_SERIES.copy()\nweather_series_di
 set_cell(nb, 64, '''
 weather_events = pd.DataFrame()
 for series_ticker in weather_series_dict.keys():
-    events_temp = pd.json_normalize(events.get_events(series_ticker=series_ticker, limit=25)['events'])
+    events_temp = pd.json_normalize(
+        retry_on_429(
+            f"weather events {series_ticker}",
+            lambda st=series_ticker: events.get_events(series_ticker=st, limit=25),
+        )['events']
+    )
     weather_events = pd.concat([weather_events, events_temp], ignore_index=True)
-weather_events['City'] = weather_events['title'].str.extract(r'in\s+(.+?)(?=\s+(?:on|today|tomorrow|yesterday)\b|[?]|$)', expand=False).str.strip()
+weather_events['City'] = extract_city_from_text(weather_events['title'])
 weather_events
 ''')
 
 set_cell(nb, 65, '''
 weather_markets = pd.DataFrame()
 for series_ticker in weather_series_dict.keys():
-    events_temp = pd.json_normalize(market.get_markets(series_ticker=series_ticker, status='open', limit=25)['markets'])
+    events_temp = pd.json_normalize(
+        retry_on_429(
+            f"weather markets {series_ticker}",
+            lambda st=series_ticker: market.get_markets(series_ticker=st, status='open', limit=25),
+        )['markets']
+    )
     weather_markets = pd.concat([weather_markets, events_temp], ignore_index=True)
 weather_markets = normalize_market_frame(weather_markets)
-weather_markets['City'] = weather_markets['yes_sub_title'].str.extract(r'in\s+(.+?)(?=\s+(?:on|today|tomorrow|yesterday)\b|[?]|$)', expand=False).str.strip()
+weather_markets['City'] = extract_city_from_text(weather_markets['yes_sub_title'])
 weather_markets
 ''')
 
@@ -789,6 +917,7 @@ if 'BeautifulSoup' in globals():
         url = f"https://www.imdb.com/title/{title_id}/ratings"
         headers = {'User-Agent': 'Mozilla/5.0'}
         res = requests.get(url, headers=headers, timeout=15)
+        res.raise_for_status()
         soup = BeautifulSoup(res.text, 'html.parser')
         dist = {}
         for row in soup.select('table.imdbRatingTable tr'):
@@ -797,7 +926,7 @@ if 'BeautifulSoup' in globals():
                 rating = int(cols[0].text.strip())
                 count = int(cols[2].text.strip().replace(',', ''))
                 dist[rating] = count
-        dist
+        return dist
 ''')
 
 set_cell(nb, 71, '''
