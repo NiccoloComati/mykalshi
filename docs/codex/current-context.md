@@ -1,6 +1,6 @@
 # Current Context
 
-Last updated: 2026-03-15
+Last updated: 2026-03-16
 
 ## Repo Goal
 
@@ -104,6 +104,12 @@ The foundation layer has been exercised in the local `.venv` on 2026-03-15.
   - `python -m mykalshi backtest historical ... --strategy tests.cli_fixtures:historical_strategy`
   - installed console script `mykalshi --help`
 - notebook rebuild smoke passed for `notebooks/main_current.ipynb` by executing its code path as a plain Python script (the environment does not currently have `jupyter` installed)
+- rebuilt notebook-parity smoke passed for `notebooks/main_current.ipynb` after restoring the original notebook structure and running notebook-specific live checks for:
+  - `PRES-2024` event close-up
+  - presidential candlestick history through `market.get_full_market(...)`
+  - lightweight presidential trade previews through `routing.get_trades_preview_dataframe_auto(...)`
+  - authenticated orderbook access from the `notebooks/` working directory
+  - session capture inside a running notebook-style event loop
 
 ## Safety Note
 
@@ -153,9 +159,17 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - `cli.py` now provides a real `mykalshi` command surface over discovery, websocket capture, replay inspection, historical/replay backtests, and trading workflow helpers.
 - the CLI now supports standardized `capture session` directories plus `--session-dir` for replay summary and replay backtests.
 - `notebooks/main_current.ipynb` is now the current-code replacement for the old exploratory notebook, using live discovery, current orderbook normalization, session capture, and replay backtests.
+- `notebooks/main_current.ipynb` is now rebuilt from `notebooks/main.ipynb` structure rather than being a small replacement demo notebook.
+- the presidential-election close-up from the original notebook is restored in `notebooks/main_current.ipynb`, including aligned candidate candlestick history built on the current API.
 - `notebooks/main_current.ipynb` now bootstraps the kernel explicitly: it resolves the repo root onto `sys.path` and raises a clear `%pip install -e "...[analysis,storage,websocket]"` instruction when the active notebook kernel is missing analysis dependencies.
 - `notebooks/main_current.ipynb` now targets a dedicated `mykalshi (.venv)` kernelspec, and `ipykernel` is included in the `analysis` extra so editable installs expose a notebook-capable repo environment instead of relying on an external kernel guess.
 - `notebooks/main_current.ipynb` now also falls back to the repo `.venv` site-packages when VS Code/Jupyter opens it under a non-venv Python 3.11 kernel, so notebook imports still work while making the kernel mismatch explicit.
+- `config.KalshiConfig.from_env()` now resolves relative key-file paths against the discovered `.env` location, which fixes authenticated notebook usage when the working directory is `notebooks/`.
+- `research.websocket` sync wrappers now work under an already-running event loop by executing the async capture in a background thread.
+- SQLite capture sinks now allow notebook-thread/background-thread capture writes via `check_same_thread=False`.
+- `market.get_market_orderbook(...)` now includes a legacy-compatible `orderbook` key alongside the current `orderbook_fp` payload.
+- `market.candlesticks_to_df(...)`, `market.build_candlestick(...)`, and `events.event_info(...)` now normalize current Kalshi fixed-point and dollar-denominated payload fields into the notebook-friendly shapes used by the old analysis code.
+- `routing.get_trades_preview_auto(...)` and `routing.get_trades_preview_dataframe_auto(...)` now provide light trade samples without forcing full historical pulls in notebook analyses.
 - the CLI strategy loader accepts Python import paths like `module.submodule:ClassName` or `module.submodule:function_name`.
 - trading mutation commands in the CLI default to dry-run planning and require `--execute` for live writes.
 

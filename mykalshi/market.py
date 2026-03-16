@@ -5,7 +5,9 @@ import threading
 import time
 from datetime import datetime, timedelta
 
+from .fixed_point import dollars_to_cents
 from .formatting import format_timestamp, parse_timestamp
+from .orderbook import extract_orderbook_levels
 from .transport import collect_cursor_pages, kalshi_get
 
 
@@ -50,7 +52,17 @@ def get_markets(
 
 def get_market_orderbook(ticker, depth=None):
     params = {"depth": depth} if depth is not None else None
-    return kalshi_get(f"/markets/{ticker}/orderbook", params, authenticated=True)
+    response = kalshi_get(f"/markets/{ticker}/orderbook", params, authenticated=True)
+    if "orderbook" in response:
+        return response
+
+    yes_levels, no_levels = extract_orderbook_levels(response)
+    response = dict(response)
+    response["orderbook"] = {
+        "yes": [[price_cents, float(size)] for price_cents, size in sorted(yes_levels.items())],
+        "no": [[price_cents, float(size)] for price_cents, size in sorted(no_levels.items())],
+    }
+    return response
 
 
 def get_market_candlesticks(series_ticker, ticker, start_ts, end_ts, period_interval):
@@ -101,14 +113,16 @@ def build_candlestick(candlestick_data):
 
     records = []
     for entry in candlestick_data["candlesticks"]:
+        price = entry.get("price", {})
+        yes_bid = entry.get("yes_bid", {})
         records.append(
             {
                 "Date": datetime.fromtimestamp(entry["end_period_ts"]),
-                "Open": entry["price"]["open"] or entry["yes_bid"].get("open"),
-                "High": entry["price"]["high"] or entry["yes_bid"].get("high"),
-                "Low": entry["price"]["low"] or entry["yes_bid"].get("low"),
-                "Close": entry["price"]["close"] or entry["yes_bid"].get("close"),
-                "Volume": entry["volume"],
+                "Open": _extract_candlestick_price(price, "open") or _extract_candlestick_price(yes_bid, "open"),
+                "High": _extract_candlestick_price(price, "high") or _extract_candlestick_price(yes_bid, "high"),
+                "Low": _extract_candlestick_price(price, "low") or _extract_candlestick_price(yes_bid, "low"),
+                "Close": _extract_candlestick_price(price, "close") or _extract_candlestick_price(yes_bid, "close"),
+                "Volume": _extract_fixed_point_count(entry, "volume"),
             }
         )
     dataframe = pd.DataFrame(records)
@@ -126,11 +140,13 @@ def candlesticks_to_df(candlestick_response):
     for candle in candlestick_response["candlesticks"]:
         row = {
             "end_period": format_timestamp(candle["end_period_ts"]),
-            "volume": candle["volume"],
-            "open_interest": candle["open_interest"],
+            "volume": _extract_fixed_point_count(candle, "volume"),
+            "open_interest": _extract_fixed_point_count(candle, "open_interest"),
         }
         for section in ["yes_bid", "yes_ask", "price"]:
             for key, value in candle.get(section, {}).items():
+                normalized_key, normalized_value = _normalize_candlestick_field(key, value)
+                row[f"{section}_{normalized_key}"] = normalized_value
                 row[f"{section}_{key}"] = value
         rows.append(row)
 
@@ -149,9 +165,9 @@ def get_full_market(series_ticker, ticker, period_interval, start_ts=None, end_t
             end_ts = datetime.fromisoformat(market_meta["market"]["close_time"].replace("Z", "")).replace(tzinfo=None)
 
     if isinstance(start_ts, str):
-        start_ts = datetime.strptime(start_ts, "%m/%d/%Y")
+        start_ts = datetime.fromtimestamp(parse_timestamp(start_ts))
     if isinstance(end_ts, str):
-        end_ts = datetime.strptime(end_ts, "%m/%d/%Y")
+        end_ts = datetime.fromtimestamp(parse_timestamp(end_ts))
 
     all_candles = []
     chunk = timedelta(minutes=period_interval * 5000)
@@ -170,6 +186,30 @@ def get_full_market(series_ticker, ticker, period_interval, start_ts=None, end_t
         current_start = current_end
 
     return {"ticker": ticker, "candlesticks": all_candles}
+
+
+def _extract_fixed_point_count(payload, key):
+    if payload.get(key) is not None:
+        return float(payload[key])
+    fixed_point_key = f"{key}_fp"
+    if payload.get(fixed_point_key) is not None:
+        return float(payload[fixed_point_key])
+    return None
+
+
+def _normalize_candlestick_field(key, value):
+    if key.endswith("_dollars") and value is not None:
+        return key.removesuffix("_dollars"), dollars_to_cents(value)
+    return key, value
+
+
+def _extract_candlestick_price(section, key):
+    if section.get(key) is not None:
+        return float(section[key])
+    dollars_key = f"{key}_dollars"
+    if section.get(dollars_key) is not None:
+        return float(dollars_to_cents(section[dollars_key]))
+    return None
 
 
 def get_all_trades(ticker=None, min_ts=None, max_ts=None, batch_size=100, calls_per_sec=30):

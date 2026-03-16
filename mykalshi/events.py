@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from .fixed_point import dollars_to_cents
 from .transport import collect_cursor_pages, kalshi_get
 
 
@@ -113,12 +114,12 @@ def event_info(event_ticker):
                 "range": market.get("subtitle")
                 or f"{market.get('floor_strike', '')} - {market.get('cap_strike', '')}",
                 "strike_type": market.get("strike_type"),
-                "last_price": market.get("last_price"),
-                "yes_bid": market.get("yes_bid"),
-                "yes_ask": market.get("yes_ask"),
-                "no_bid": market.get("no_bid"),
-                "no_ask": market.get("no_ask"),
-                "volume": market.get("volume"),
+                "last_price": _market_price_cents(market, "last_price", "last_price_dollars"),
+                "yes_bid": _market_price_cents(market, "yes_bid", "yes_bid_dollars"),
+                "yes_ask": _market_price_cents(market, "yes_ask", "yes_ask_dollars"),
+                "no_bid": _market_price_cents(market, "no_bid", "no_bid_dollars"),
+                "no_ask": _market_price_cents(market, "no_ask", "no_ask_dollars"),
+                "volume": _market_count(market, "volume"),
                 "open_time": market.get("open_time"),
                 "close_time": market.get("close_time"),
                 "status": market.get("status"),
@@ -143,6 +144,23 @@ def event_info(event_ticker):
         },
         "markets": market_df,
     }
+
+
+def _market_price_cents(payload, legacy_key, dollars_key):
+    if payload.get(legacy_key) is not None:
+        return payload[legacy_key]
+    if payload.get(dollars_key) is not None:
+        return dollars_to_cents(payload[dollars_key])
+    return None
+
+
+def _market_count(payload, legacy_key):
+    if payload.get(legacy_key) is not None:
+        return payload[legacy_key]
+    fixed_point_key = f"{legacy_key}_fp"
+    if payload.get(fixed_point_key) is not None:
+        return float(payload[fixed_point_key])
+    return None
 
 
 def get_structured_target(structured_target_id):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -23,6 +24,30 @@ def _event_timestamp(msg: dict[str, Any]) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _run_coroutine_sync(coro: Any) -> Any:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    result: dict[str, Any] = {}
+    error: dict[str, BaseException] = {}
+
+    def runner() -> None:
+        try:
+            result["value"] = asyncio.run(coro)
+        except BaseException as exc:  # pragma: no cover - propagated to caller
+            error["value"] = exc
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    thread.join()
+
+    if "value" in error:
+        raise error["value"]
+    return result.get("value")
 
 
 @dataclass(frozen=True)
@@ -461,7 +486,7 @@ class KalshiWebsocketClient:
         receive_timeout: float = 30.0,
         include_book_state: bool = False,
     ) -> list[dict[str, Any]]:
-        return asyncio.run(
+        return _run_coroutine_sync(
             self.capture_orderbook(
                 market_ticker,
                 sink=sink,
@@ -486,7 +511,7 @@ class KalshiWebsocketClient:
         include_book_state: bool = False,
         authenticated: bool = True,
     ) -> list[dict[str, Any]]:
-        return asyncio.run(
+        return _run_coroutine_sync(
             self.capture_market_data(
                 channels=channels,
                 market_ticker=market_ticker,

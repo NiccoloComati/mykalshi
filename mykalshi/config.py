@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 from .rate_limit import DEFAULT_READ_LIMIT_PER_SECOND, DEFAULT_WRITE_LIMIT_PER_SECOND
 
@@ -13,13 +14,19 @@ PRODUCTION_WS_URL = "wss://api.elections.kalshi.com/trade-api/ws/v2"
 DEMO_WS_URL = "wss://demo-api.kalshi.co/trade-api/ws/v2"
 
 
-def _load_dotenv_if_available() -> None:
+def _load_dotenv_if_available() -> str | None:
     try:
-        from dotenv import load_dotenv
+        from dotenv import find_dotenv, load_dotenv
     except ImportError:
-        return
+        return None
+
+    dotenv_path = find_dotenv(usecwd=True)
+    if dotenv_path:
+        load_dotenv(dotenv_path)
+        return dotenv_path
 
     load_dotenv()
+    return None
 
 
 def _first_env(*names: str) -> str | None:
@@ -40,6 +47,32 @@ def _bool_env(name: str, default: bool) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _resolve_relative_path(path: str | None, *, dotenv_path: str | None = None) -> str | None:
+    if not path:
+        return None
+
+    candidate = Path(path).expanduser()
+    if candidate.is_absolute():
+        return str(candidate)
+
+    search_roots: list[Path] = []
+    if dotenv_path:
+        search_roots.append(Path(dotenv_path).resolve().parent)
+    search_roots.append(Path.cwd())
+    search_roots.append(Path(__file__).resolve().parent.parent)
+
+    seen: set[Path] = set()
+    for root in search_roots:
+        resolved = (root / candidate).resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.exists():
+            return str(resolved)
+
+    return str(candidate)
 
 
 class KalshiEnvironment(str, Enum):
@@ -99,7 +132,7 @@ class KalshiConfig:
 
     @classmethod
     def from_env(cls) -> "KalshiConfig":
-        _load_dotenv_if_available()
+        dotenv_path = _load_dotenv_if_available()
 
         environment = KalshiEnvironment.from_value(
             _first_env("KALSHI_ENV", "ENV")
@@ -135,7 +168,7 @@ class KalshiConfig:
         return cls(
             environment=environment,
             api_key_id=api_key_id,
-            private_key_path=private_key_path,
+            private_key_path=_resolve_relative_path(private_key_path, dotenv_path=dotenv_path),
             rest_base_url=_first_env("KALSHI_REST_BASE_URL"),
             ws_url=_first_env("KALSHI_WS_URL"),
             enable_rate_limiting=_bool_env("KALSHI_ENABLE_RATE_LIMITING", True),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -83,6 +84,22 @@ class SQLiteOrderbookSinkTests(unittest.TestCase):
             self.assertEqual(len(loaded), 1)
             self.assertEqual(loaded[0]["market_ticker"], "FED-23DEC-T3.00")
             self.assertEqual(loaded[0]["yes_levels"][0]["price_cents"], 22)
+            sink.close()
+
+    def test_sqlite_sink_supports_cross_thread_writes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sink = SQLiteOrderbookSink(Path(tmpdir) / "orderbook.sqlite")
+
+            def writer():
+                sink.write_orderbook_event(sample_event())
+                sink.flush()
+
+            thread = threading.Thread(target=writer)
+            thread.start()
+            thread.join()
+
+            loaded = sink.load_events()
+            self.assertEqual(len(loaded), 1)
             sink.close()
 
 

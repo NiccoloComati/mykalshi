@@ -106,6 +106,46 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(result["sources_used"], ["historical", "live"])
         self.assertEqual([trade["trade_id"] for trade in result["trades"]], ["a", "b"])
 
+    def test_get_trades_preview_auto_uses_historical_when_routed(self):
+        with patch(
+            "mykalshi.routing.resolve_trade_source",
+            return_value={
+                "ticker": "TEST-HIST",
+                "cutoff_ts": 100,
+                "start_ts": None,
+                "end_ts": None,
+                "use_historical": True,
+                "use_live": False,
+                "historical_range": {"min_ts": None, "max_ts": None},
+                "live_range": None,
+            },
+        ), patch(
+            "mykalshi.routing.historical.get_historical_trades",
+            return_value={"trades": [{"trade_id": "a"}], "cursor": "next"},
+        ) as mocked_hist:
+            result = routing.get_trades_preview_auto("TEST-HIST", limit=25)
+
+        mocked_hist.assert_called_once_with(ticker="TEST-HIST", limit=25, min_ts=None, max_ts=None)
+        self.assertEqual(result["source"], "historical")
+        self.assertEqual(result["trades"][0]["trade_id"], "a")
+
+    def test_get_trades_preview_dataframe_auto_sorts_created_time(self):
+        with patch(
+            "mykalshi.routing.get_trades_preview_auto",
+            return_value={
+                "ticker": "TEST",
+                "source": "live",
+                "trades": [
+                    {"trade_id": "b", "created_time": "2026-03-16T00:00:01Z"},
+                    {"trade_id": "a", "created_time": "2026-03-16T00:00:00Z"},
+                ],
+                "cursor": None,
+            },
+        ):
+            dataframe = routing.get_trades_preview_dataframe_auto("TEST")
+
+        self.assertEqual(list(dataframe["trade_id"]), ["a", "b"])
+
 
 if __name__ == "__main__":
     unittest.main()

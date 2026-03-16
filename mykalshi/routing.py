@@ -186,6 +186,70 @@ def get_trades_auto(
     }
 
 
+def get_trades_preview_auto(
+    ticker: str,
+    *,
+    limit: int = 100,
+    start_ts: Any | None = None,
+    end_ts: Any | None = None,
+) -> dict[str, Any]:
+    route = resolve_trade_source(ticker, start_ts=start_ts, end_ts=end_ts)
+
+    if route["use_historical"] and not route["use_live"]:
+        response = historical.get_historical_trades(
+            ticker=ticker,
+            limit=limit,
+            min_ts=route["historical_range"]["min_ts"] if route["historical_range"] else None,
+            max_ts=route["historical_range"]["max_ts"] if route["historical_range"] else None,
+        )
+        return {
+            "ticker": ticker,
+            "source": "historical",
+            "trades": response.get("trades", []),
+            "cursor": response.get("cursor"),
+        }
+
+    response = market.get_trades(
+        ticker=ticker,
+        limit=limit,
+        min_ts=route["live_range"]["min_ts"] if route["live_range"] else None,
+        max_ts=route["live_range"]["max_ts"] if route["live_range"] else None,
+    )
+    return {
+        "ticker": ticker,
+        "source": "live",
+        "trades": response.get("trades", []),
+        "cursor": response.get("cursor"),
+    }
+
+
+def get_trades_preview_dataframe_auto(
+    ticker: str,
+    *,
+    limit: int = 100,
+    start_ts: Any | None = None,
+    end_ts: Any | None = None,
+):
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        raise ImportError("pandas is required for get_trades_preview_dataframe_auto") from exc
+
+    result = get_trades_preview_auto(
+        ticker,
+        limit=limit,
+        start_ts=start_ts,
+        end_ts=end_ts,
+    )
+    dataframe = pd.DataFrame(result["trades"])
+    for candidate in ("created_time", "timestamp"):
+        if candidate in dataframe.columns:
+            dataframe[candidate] = pd.to_datetime(dataframe[candidate], utc=True)
+            dataframe = dataframe.sort_values(candidate)
+            break
+    return dataframe
+
+
 def get_trades_dataframe_auto(
     ticker: str,
     *,

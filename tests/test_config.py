@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from mykalshi.config import (
@@ -55,6 +57,29 @@ class KalshiConfigTests(unittest.TestCase):
         self.assertEqual(config.write_limit_per_second, 7.0)
         self.assertEqual(config.account_limits_cache_seconds, 45.0)
         self.assertEqual(config.max_rate_limit_retries, 4)
+
+    @patch.dict(os.environ, {}, clear=True)
+    def test_relative_private_key_path_is_resolved_from_dotenv_location(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            notebooks_dir = root / "notebooks"
+            notebooks_dir.mkdir()
+            key_path = root / "demo.pem"
+            key_path.write_text("demo-key", encoding="utf-8")
+            (root / ".env").write_text(
+                "ENV=DEMO\nDEMO_KEYID=demo-key\nDEMO_KEYFILE=demo.pem\n",
+                encoding="utf-8",
+            )
+
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(notebooks_dir)
+                config = KalshiConfig.from_env()
+            finally:
+                os.chdir(previous_cwd)
+
+        self.assertEqual(config.environment, KalshiEnvironment.DEMO)
+        self.assertEqual(config.private_key_path, str(key_path.resolve()))
 
 
 if __name__ == "__main__":
