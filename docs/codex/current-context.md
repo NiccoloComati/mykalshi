@@ -153,6 +153,7 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - `cli.py` now provides a real `mykalshi` command surface over discovery, websocket capture, replay inspection, historical/replay backtests, and trading workflow helpers.
 - the CLI now supports standardized `capture session` directories plus `--session-dir` for replay summary and replay backtests.
 - `notebooks/main_current.ipynb` is now the current-code replacement for the old exploratory notebook, using live discovery, current orderbook normalization, session capture, and replay backtests.
+- `notebooks/main_current.ipynb` now bootstraps the kernel explicitly: it resolves the repo root onto `sys.path` and raises a clear `%pip install -e "...[analysis,storage,websocket]"` instruction when the active notebook kernel is missing analysis dependencies.
 - the CLI strategy loader accepts Python import paths like `module.submodule:ClassName` or `module.submodule:function_name`.
 - trading mutation commands in the CLI default to dry-run planning and require `--execute` for live writes.
 
