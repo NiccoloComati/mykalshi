@@ -16,6 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 analysis = [
+  "ipykernel>=6.29.0",
   "ipython>=8.0.0",
   "matplotlib>=3.8.0",
   "mplfinance>=0.12.10b0",
