@@ -128,6 +128,19 @@ class ResearchWorkflowTests(unittest.TestCase):
         self.assertEqual(event_result[0].event_ticker, "KXELONMARS-99")
         self.assertEqual(resolved_event.summary()["series_ticker"], "KXELONMARS")
 
+    def test_research_session_series_wrapping_handles_null_tags(self):
+        series_payload = {
+            "ticker": "HIGHMIA",
+            "title": "Highest temperature in Miami",
+            "category": "Climate and Weather",
+            "tags": None,
+        }
+        with patch("mykalshi.research.workflows.discovery.search_series", return_value=[series_payload]):
+            result = ResearchSession().search_series(category="Climate and Weather")
+
+        self.assertEqual(result[0].ticker, "HIGHMIA")
+        self.assertEqual(result[0].tags, ())
+
     def test_load_replay_dataset_summarizes_sources(self):
         dataset = ResearchSession().load_replay_dataset(
             market_data_source=[ticker_event(), ticker_event(market_ticker="OTHER-26")],

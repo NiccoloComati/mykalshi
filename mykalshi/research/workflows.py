@@ -163,7 +163,7 @@ class DiscoveredSeries:
             ticker=str(payload.get("ticker") or ""),
             title=payload.get("title"),
             category=payload.get("category"),
-            tags=tuple(str(tag) for tag in payload.get("tags", []) if tag is not None),
+            tags=tuple(str(tag) for tag in (payload.get("tags") or []) if tag is not None),
             raw=payload,
         )
 

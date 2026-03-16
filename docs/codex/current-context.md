@@ -103,6 +103,7 @@ The foundation layer has been exercised in the local `.venv` on 2026-03-15.
   - `python -m mykalshi trading plan-order ...` in dry-run mode
   - `python -m mykalshi backtest historical ... --strategy tests.cli_fixtures:historical_strategy`
   - installed console script `mykalshi --help`
+- notebook rebuild smoke passed for `notebooks/main_current.ipynb` by executing its code path as a plain Python script (the environment does not currently have `jupyter` installed)
 
 ## Safety Note
 
@@ -138,6 +139,7 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - `research.workflows` now provides `DiscoveredMarket`, `ReplayDataset`, and `ResearchSession` so discovery, dataset loading, and replay/historical backtests can be driven through one higher-level API.
 - `research.workflows` now also provides `CaptureSession` plus standardized session manifests so websocket capture, replay inspection, and replay backtests can share one directory-based workflow.
 - `research.workflows.ResearchSession.capture_market_session(...)` can now capture directly from an explicit `market_ticker` or by resolving one from discovery filters.
+- `research.workflows.DiscoveredSeries.from_discovery_result(...)` now handles `tags=None` from live series payloads.
 - `research.capture_market_data_sync(...)` is now the preferred entry point for live ticker/trade websocket collection.
 - `routing.get_trades_auto(...)` is now the preferred entry point when code should not need to manually split live and archived trade sources.
 - `client.KalshiClient` now has centralized account-aware rate limiting, `429` retry handling, and `/account/limits` auto-detection.
@@ -150,6 +152,7 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - `trading_workflows` now provides higher-level helpers for market context, order submission, amend, replace, stale-order cancellation, and position flattening.
 - `cli.py` now provides a real `mykalshi` command surface over discovery, websocket capture, replay inspection, historical/replay backtests, and trading workflow helpers.
 - the CLI now supports standardized `capture session` directories plus `--session-dir` for replay summary and replay backtests.
+- `notebooks/main_current.ipynb` is now the current-code replacement for the old exploratory notebook, using live discovery, current orderbook normalization, session capture, and replay backtests.
 - the CLI strategy loader accepts Python import paths like `module.submodule:ClassName` or `module.submodule:function_name`.
 - trading mutation commands in the CLI default to dry-run planning and require `--execute` for live writes.
 
