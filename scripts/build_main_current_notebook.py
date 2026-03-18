@@ -127,6 +127,12 @@ set_cell(
         files = sorted(PROJECT_ROOT.glob("all_markets_*.csv"), key=lambda path: path.stat().st_mtime)
         return files[-1] if files else None
 
+    def snapshot_path_for_refresh() -> Path:
+        existing = latest_market_snapshot_path()
+        if existing is not None:
+            return existing
+        return PROJECT_ROOT / f"all_markets_{datetime.now(timezone.utc).strftime('%Y-%m-%d-%H-%M-%S')}.csv"
+
     MARKET_HISTORY_CACHE = {}
 
     def retry_on_429(label: str, func, *, max_retries: int = 4, base_backoff_seconds: float = 1.0):
@@ -164,15 +170,15 @@ set_cell(
         return frame
 
     def load_market_snapshot() -> pd.DataFrame:
-        snapshot_path = latest_market_snapshot_path()
-        if snapshot_path is not None:
-            print(f"Loaded market snapshot from {snapshot_path.name}")
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", category=pd.errors.DtypeWarning)
-                return normalize_market_frame(pd.read_csv(snapshot_path, low_memory=False))
-        print("No cached all-market CSV found; falling back to a sampled live pull.")
-        sampled = pd.json_normalize(market.get_all_markets(batch_size=100, max_items=500))
-        return normalize_market_frame(sampled)
+        snapshot_path = snapshot_path_for_refresh()
+        sync_summary = market.sync_market_snapshot_csv(snapshot_path)
+        print(
+            f"Loaded market snapshot from {snapshot_path.name} "
+            f"(mode={sync_summary['mode']}, delta_count={sync_summary['delta_count']})"
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=pd.errors.DtypeWarning)
+            return normalize_market_frame(pd.read_csv(snapshot_path, low_memory=False))
 
     def load_open_markets(limit: int = 300) -> pd.DataFrame:
         payload = pd.json_normalize(market.get_all_markets(status="open", batch_size=100, max_items=limit))

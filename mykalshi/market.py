@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import random
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from .fixed_point import dollars_to_cents
 from .formatting import format_timestamp, parse_timestamp
@@ -97,12 +99,177 @@ def get_trades(ticker=None, limit=100, cursor=None, min_ts=None, max_ts=None):
     return kalshi_get("/markets/trades", {k: v for k, v in params.items() if v is not None})
 
 
-def get_all_markets(status=None, batch_size=1000, max_items=None):
+def get_all_markets(
+    status=None,
+    batch_size=1000,
+    max_items=None,
+    *,
+    event_ticker=None,
+    series_ticker=None,
+    min_created_ts=None,
+    max_created_ts=None,
+    min_updated_ts=None,
+    max_close_ts=None,
+    min_close_ts=None,
+    min_settled_ts=None,
+    max_settled_ts=None,
+    tickers=None,
+    mve_filter=None,
+):
     return collect_cursor_pages(
-        lambda cursor: get_markets(limit=batch_size, status=status, cursor=cursor),
+        lambda cursor: get_markets(
+            limit=batch_size,
+            cursor=cursor,
+            event_ticker=event_ticker,
+            series_ticker=series_ticker,
+            min_created_ts=min_created_ts,
+            max_created_ts=max_created_ts,
+            min_updated_ts=min_updated_ts,
+            max_close_ts=max_close_ts,
+            min_close_ts=min_close_ts,
+            min_settled_ts=min_settled_ts,
+            max_settled_ts=max_settled_ts,
+            status=status,
+            tickers=tickers,
+            mve_filter=mve_filter,
+        ),
         item_key="markets",
         max_items=max_items,
     )
+
+
+def default_market_snapshot_anchor_path(snapshot_path):
+    path = Path(snapshot_path)
+    return path.with_suffix(path.suffix + ".anchor.json")
+
+
+def _snapshot_timestamp_now():
+    return datetime.now(timezone.utc)
+
+
+def _snapshot_timestamp_from_name(snapshot_path):
+    path = Path(snapshot_path)
+    prefix = "all_markets_"
+    if path.stem.startswith(prefix):
+        suffix = path.stem[len(prefix):]
+        try:
+            return datetime.strptime(suffix, "%Y-%m-%d-%H-%M-%S").replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+    return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+
+
+def _read_snapshot_anchor(anchor_path):
+    path = Path(anchor_path)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_snapshot_anchor(anchor_path, payload):
+    path = Path(anchor_path)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def sync_market_snapshot_csv(
+    snapshot_path,
+    *,
+    anchor_path=None,
+    status=None,
+    batch_size=1000,
+    max_items=None,
+):
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        raise ImportError("pandas is required for sync_market_snapshot_csv") from exc
+
+    snapshot_file = Path(snapshot_path)
+    if not snapshot_file.is_absolute():
+        snapshot_file = Path.cwd() / snapshot_file
+    snapshot_file.parent.mkdir(parents=True, exist_ok=True)
+
+    anchor_file = default_market_snapshot_anchor_path(snapshot_file) if anchor_path is None else Path(anchor_path)
+    if not anchor_file.is_absolute():
+        anchor_file = Path.cwd() / anchor_file
+    anchor_file.parent.mkdir(parents=True, exist_ok=True)
+
+    snapshot_exists = snapshot_file.exists()
+    refresh_started_at = _snapshot_timestamp_now()
+
+    if not snapshot_exists:
+        markets = get_all_markets(status=status, batch_size=batch_size, max_items=max_items)
+        frame = pd.json_normalize(markets)
+        frame.to_csv(snapshot_file, index=False)
+        anchor_payload = {
+            "snapshot_path": str(snapshot_file),
+            "status": status,
+            "mode": "full_refresh",
+            "snapshot_created_at": refresh_started_at.isoformat(),
+            "snapshot_cursor_ts": int(refresh_started_at.timestamp()),
+            "market_count": int(len(frame)),
+        }
+        _write_snapshot_anchor(anchor_file, anchor_payload)
+        return {
+            "snapshot_path": snapshot_file,
+            "anchor_path": anchor_file,
+            "mode": "full_refresh",
+            "market_count": int(len(frame)),
+            "delta_count": int(len(frame)),
+            "anchor": anchor_payload,
+        }
+
+    anchor_payload = _read_snapshot_anchor(anchor_file)
+    if anchor_payload is not None:
+        anchor_dt = datetime.fromisoformat(anchor_payload["snapshot_created_at"])
+        mode = "incremental_refresh"
+    else:
+        anchor_dt = _snapshot_timestamp_from_name(snapshot_file)
+        mode = "incremental_refresh_bootstrap_anchor"
+
+    existing_frame = pd.read_csv(snapshot_file, low_memory=False)
+    delta_markets = get_all_markets(
+        status=status,
+        batch_size=batch_size,
+        max_items=max_items,
+        min_updated_ts=int(anchor_dt.timestamp()),
+    )
+
+    if delta_markets:
+        delta_frame = pd.json_normalize(delta_markets)
+        if "ticker" not in existing_frame.columns or "ticker" not in delta_frame.columns:
+            raise ValueError("Market snapshot sync requires a 'ticker' column in both snapshot and delta data")
+        existing_frame = existing_frame.drop_duplicates(subset=["ticker"], keep="last")
+        delta_frame = delta_frame.drop_duplicates(subset=["ticker"], keep="last")
+        existing_frame = existing_frame.set_index("ticker", drop=False)
+        delta_frame = delta_frame.set_index("ticker", drop=False)
+        merged = pd.concat(
+            [existing_frame.loc[~existing_frame.index.isin(delta_frame.index)], delta_frame],
+            axis=0,
+        )
+        merged = merged.sort_index()
+        merged.to_csv(snapshot_file, index=False)
+        market_count = int(len(merged))
+    else:
+        market_count = int(len(existing_frame))
+
+    new_anchor = {
+        "snapshot_path": str(snapshot_file),
+        "status": status,
+        "mode": mode,
+        "snapshot_created_at": refresh_started_at.isoformat(),
+        "snapshot_cursor_ts": int(refresh_started_at.timestamp()),
+        "market_count": market_count,
+    }
+    _write_snapshot_anchor(anchor_file, new_anchor)
+    return {
+        "snapshot_path": snapshot_file,
+        "anchor_path": anchor_file,
+        "mode": mode,
+        "market_count": market_count,
+        "delta_count": int(len(delta_markets)),
+        "anchor": new_anchor,
+    }
 
 
 def build_candlestick(candlestick_data):

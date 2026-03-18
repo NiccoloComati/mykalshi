@@ -116,6 +116,11 @@ The foundation layer has been exercised in the local `.venv` on 2026-03-15.
   - LOB snapshot and LOB plot cells with dynamic market selection
   - climate/weather series, events, and open-markets cells
   - guarded IMDB appendix cells when `beautifulsoup4` is absent
+- market snapshot sync tests passed for:
+  - full-refresh snapshot creation with anchor file
+  - incremental delta merge by `ticker`
+  - bootstrap-anchor derivation from `all_markets_YYYY-MM-DD-HH-MM-SS.csv`
+  - `get_all_markets(...)` passthrough of incremental filters like `min_updated_ts`
 
 ## Safety Note
 
@@ -177,6 +182,9 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - `market.candlesticks_to_df(...)`, `market.build_candlestick(...)`, and `events.event_info(...)` now normalize current Kalshi fixed-point and dollar-denominated payload fields into the notebook-friendly shapes used by the old analysis code.
 - `routing.get_trades_preview_auto(...)` and `routing.get_trades_preview_dataframe_auto(...)` now provide light trade samples without forcing full historical pulls in notebook analyses.
 - `notebooks/main_current.ipynb` now suppresses the large cached market-snapshot `DtypeWarning` by reading the CSV with `low_memory=False`.
+- `market.sync_market_snapshot_csv(...)` now supports anchored market-snapshot refreshes using a sidecar anchor JSON file, so cached market snapshots can be updated via `min_updated_ts` deltas instead of always redownloading a full snapshot.
+- `market.get_all_markets(...)` now accepts the same incremental filter arguments as `get_markets(...)`, including `min_updated_ts`, which the snapshot sync path uses for delta refreshes.
+- `notebooks/main_current.ipynb` now calls `market.sync_market_snapshot_csv(...)` before loading the cached market snapshot and prints the refresh mode plus delta count.
 - the notebook now caches and retries repeated `get_full_market(...)` loads at the notebook layer, which keeps the presidential and tested-market cells from failing on transient `429 too_many_requests` responses.
 - the tested-markets setup cell now lazy-loads full candlestick histories only when a later cell actually needs them instead of fetching all six histories eagerly.
 - the notebook now prefers a quoted market for the LOB section and falls back more gracefully when the chosen live market only shows one side of the book.
