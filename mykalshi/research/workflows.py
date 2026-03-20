@@ -18,7 +18,10 @@ from .datasets import (
     market_data_events_to_dataframe,
     orderbook_events_to_dataframe,
 )
+from .event_analysis import EventCloseup, MarketHistory, build_event_closeup, load_market_history
+from .family_analysis import MarketFamilyAnalysis, build_market_family_analysis
 from .engine import BacktestRunResult, KalshiStrategy
+from .orderbook_analysis import OrderbookSnapshot, get_orderbook_snapshot
 from .storage import (
     MultiMarketDataSink,
     MultiOrderbookSink,
@@ -28,6 +31,7 @@ from .storage import (
     SQLiteOrderbookSink,
     SplitMarketCaptureSink,
 )
+from .universe import MarketUniverseSnapshot, UniverseSpec, open_market_universe, sync_market_universe
 from .websocket import KalshiWebsocketClient
 
 
@@ -482,6 +486,24 @@ class ResearchSession:
                 grouped[key] = universe
             universe.markets.append(match)
         return list(grouped.values())
+
+    def load_market_history(self, ticker: str, **kwargs: Any) -> MarketHistory:
+        return load_market_history(ticker, **kwargs)
+
+    def build_event_closeup(self, event_ticker: str, **kwargs: Any) -> EventCloseup:
+        return build_event_closeup(event_ticker, **kwargs)
+
+    def build_market_family_analysis(self, series_ticker: str, **kwargs: Any) -> MarketFamilyAnalysis:
+        return build_market_family_analysis(series_ticker, **kwargs)
+
+    def get_orderbook_snapshot(self, ticker: str, **kwargs: Any) -> OrderbookSnapshot:
+        return get_orderbook_snapshot(ticker, **kwargs)
+
+    def sync_market_universe(self, directory: str | Path, spec: UniverseSpec, *, overwrite: bool = True) -> MarketUniverseSnapshot:
+        return sync_market_universe(directory, spec, overwrite=overwrite)
+
+    def open_market_universe(self, directory: str | Path) -> MarketUniverseSnapshot:
+        return open_market_universe(directory)
 
     def open_capture_session(self, directory: str | Path) -> CaptureSession:
         return CaptureSession.from_directory(directory)

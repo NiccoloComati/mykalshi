@@ -13,6 +13,7 @@ from .backtest import (
     ZeroFeeModel,
     load_historical_trades,
 )
+from .charts import plot_market_candles, plot_market_comparison
 from .datasets import (
     load_market_data_events,
     load_orderbook_events,
@@ -22,7 +23,24 @@ from .datasets import (
     orderbook_events_to_dataframe,
     replay_orderbook_events,
 )
+from .event_analysis import (
+    EventCloseup,
+    MarketHistory,
+    build_event_closeup,
+    build_market_comparison_panel,
+    load_market_history,
+    plot_event_closeup,
+)
+from .family_analysis import MarketFamilyAnalysis, build_market_family_analysis, plot_market_family_comparison
 from .lifecycle import enrich_replay_events_with_market_lifecycle, resolve_replay_market_metadata
+from .orderbook_analysis import (
+    OrderbookSnapshot,
+    get_orderbook_snapshot,
+    orderbook_snapshots_to_matrices,
+    plot_orderbook_depth,
+    plot_orderbook_matrix_snapshot,
+    render_orderbook_text,
+)
 from .engine import (
     BacktestRunResult,
     CancelRequest,
@@ -48,6 +66,13 @@ from .storage import (
     SplitMarketCaptureSink,
 )
 from .strategies import ProbabilityEdgeStrategy, ThresholdSignalStrategy, target_flat, target_no, target_yes
+from .universe import (
+    MarketUniverseSnapshot,
+    UniverseSpec,
+    open_market_universe,
+    resolve_market_universe,
+    sync_market_universe,
+)
 from .workflows import (
     CaptureSession,
     DiscoveredEvent,
@@ -70,6 +95,11 @@ __all__ = [
     "BacktestOrder",
     "BacktestResult",
     "BacktestRunResult",
+    "EventCloseup",
+    "MarketFamilyAnalysis",
+    "MarketHistory",
+    "MarketUniverseSnapshot",
+    "OrderbookSnapshot",
     "CancelRequest",
     "CaptureSession",
     "DiscoveredEvent",
@@ -108,20 +138,37 @@ __all__ = [
     "ThresholdSignalStrategy",
     "TradeBacktester",
     "TradeSignal",
+    "UniverseSpec",
     "ZeroFeeModel",
+    "build_event_closeup",
+    "build_market_comparison_panel",
+    "build_market_family_analysis",
     "build_ticker_event",
     "build_trade_event",
     "enrich_replay_events_with_market_lifecycle",
+    "get_orderbook_snapshot",
     "load_market_data_events",
+    "load_market_history",
     "load_historical_trades",
     "load_orderbook_events",
     "load_replay_event_stream",
     "merge_replay_event_streams",
     "market_data_events_to_dataframe",
     "normalize_market_data_message",
+    "open_market_universe",
     "orderbook_events_to_dataframe",
+    "orderbook_snapshots_to_matrices",
+    "plot_event_closeup",
+    "plot_market_candles",
+    "plot_market_comparison",
+    "plot_market_family_comparison",
+    "plot_orderbook_depth",
+    "plot_orderbook_matrix_snapshot",
     "replay_orderbook_events",
+    "render_orderbook_text",
+    "resolve_market_universe",
     "resolve_replay_market_metadata",
+    "sync_market_universe",
     "target_flat",
     "target_no",
     "target_yes",

@@ -28,6 +28,11 @@ Turn `mykalshi` into a clean research and trading toolkit for Kalshi with four s
 - `mykalshi/research/strategies.py`: reusable threshold and probability-edge strategies
 - `mykalshi/research/engine/`: modular event-driven backtest engine components
 - `mykalshi/research/datasets.py`: load and replay helpers for stored market-data and orderbook datasets
+- `mykalshi/research/event_analysis.py`: reusable event close-ups and aligned market-history panels
+- `mykalshi/research/charts.py`: reusable candlestick and market-comparison chart helpers
+- `mykalshi/research/orderbook_analysis.py`: reusable order book summaries, depth plots, and snapshot-to-matrix helpers
+- `mykalshi/research/family_analysis.py`: reusable market-family / series comparison analysis
+- `mykalshi/research/universe.py`: filtered market-universe specs plus cached universe snapshots
 - `mykalshi/routing.py`: live/historical trade auto-routing
 - `mykalshi/trading_workflows.py`: higher-level trading state snapshots, execution helpers, and safety rails
 - `mykalshi/cli.py`: user-facing CLI over discovery, capture, replay, backtest, and trading workflows
@@ -125,6 +130,13 @@ The foundation layer has been exercised in the local `.venv` on 2026-03-15.
   - 2,140,645 rows loaded
   - 19 notebook-needed columns loaded instead of the full 146-column snapshot
   - in-memory pandas footprint around 674 MB for the loaded frame
+- extracted research-analysis tests passed:
+  - event closeup panel build + plot
+  - historical candlestick fallback for archived markets
+  - order book summary/depth/matrix helpers
+  - market-family top-N comparison
+  - filtered market-universe snapshot sync + reload
+  - `ResearchSession` wrappers over the new analysis layer
 
 ## Safety Note
 
@@ -191,6 +203,12 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - `market.get_all_markets(...)` now accepts the same incremental filter arguments as `get_markets(...)`, including `min_updated_ts`, which the snapshot sync path uses for delta refreshes.
 - `notebooks/main_current.ipynb` now calls `market.sync_market_snapshot_csv(...)` before loading the cached market snapshot and prints the refresh mode plus delta count.
 - `notebooks/main_current.ipynb` now reads only the notebook-needed market snapshot columns, which keeps the snapshot analysis cells usable on the existing 1.9 GB cache without exhausting tens of gigabytes of RAM.
+- `research.event_analysis` now provides a reusable close-up workflow for any event ticker, including aligned per-market bid/ask/mid/volume history panels instead of notebook-only presidential analysis code.
+- `research.charts` now provides reusable candlestick and comparison plotting helpers instead of notebook-local plotting code.
+- `research.orderbook_analysis` now provides reusable current-book summaries, YES-side depth plotting, and capture/replay snapshot-to-matrix helpers.
+- `research.family_analysis` now provides reusable series/family comparison analysis over the top markets in a Kalshi series instead of the old notebook-specific family section.
+- `research.universe` now provides filtered market-universe specs plus cacheable universe snapshots so research code can persist only a targeted subset of markets rather than relying on giant all-market snapshots.
+- `research.workflows.ResearchSession` now wraps the new event closeup, family analysis, order book snapshot, and market-universe sync helpers so they fit into the same higher-level workflow layer as replay datasets and capture sessions.
 - the notebook now caches and retries repeated `get_full_market(...)` loads at the notebook layer, which keeps the presidential and tested-market cells from failing on transient `429 too_many_requests` responses.
 - the tested-markets setup cell now lazy-loads full candlestick histories only when a later cell actually needs them instead of fetching all six histories eagerly.
 - the notebook now prefers a quoted market for the LOB section and falls back more gracefully when the chosen live market only shows one side of the book.
