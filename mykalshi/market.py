@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import csv
 import json
+import os
 import random
+import sqlite3
+import tempfile
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -171,6 +175,231 @@ def _write_snapshot_anchor(anchor_path, payload):
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _count_snapshot_rows(snapshot_path):
+    with Path(snapshot_path).open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.reader(handle)
+        next(reader, None)
+        return sum(1 for _ in reader)
+
+
+def _normalize_market_rows(markets):
+    if not markets:
+        return []
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        raise ImportError("pandas is required for sync_market_snapshot_csv") from exc
+
+    frame = pd.json_normalize(markets)
+    frame = frame.where(frame.notna(), None)
+    return frame.to_dict(orient="records")
+
+
+def _merged_snapshot_fieldnames(existing_fieldnames, delta_rows=None, extra_keys=None):
+    fieldnames = list(existing_fieldnames or [])
+    known = set(fieldnames)
+    if delta_rows is not None:
+        for row in delta_rows:
+            for key in row:
+                if key not in known:
+                    known.add(key)
+                    fieldnames.append(key)
+    if extra_keys is not None:
+        for key in extra_keys:
+            if key not in known:
+                known.add(key)
+                fieldnames.append(key)
+    return fieldnames
+
+
+def _iter_market_pages(
+    *,
+    status=None,
+    batch_size=1000,
+    max_items=None,
+    event_ticker=None,
+    series_ticker=None,
+    min_created_ts=None,
+    max_created_ts=None,
+    min_updated_ts=None,
+    max_close_ts=None,
+    min_close_ts=None,
+    min_settled_ts=None,
+    max_settled_ts=None,
+    tickers=None,
+    mve_filter=None,
+):
+    cursor = None
+    remaining = max_items
+
+    while True:
+        limit = batch_size if remaining is None else min(batch_size, remaining)
+        response = get_markets(
+            limit=limit,
+            cursor=cursor,
+            event_ticker=event_ticker,
+            series_ticker=series_ticker,
+            min_created_ts=min_created_ts,
+            max_created_ts=max_created_ts,
+            min_updated_ts=min_updated_ts,
+            max_close_ts=max_close_ts,
+            min_close_ts=min_close_ts,
+            min_settled_ts=min_settled_ts,
+            max_settled_ts=max_settled_ts,
+            status=status,
+            tickers=tickers,
+            mve_filter=mve_filter,
+        )
+        markets = response.get("markets", [])
+        if not markets:
+            break
+
+        yield markets
+
+        if remaining is not None:
+            remaining -= len(markets)
+            if remaining <= 0:
+                break
+
+        cursor = response.get("cursor")
+        if not cursor or len(markets) < limit:
+            break
+
+
+def _stage_market_rows(
+    *,
+    status=None,
+    batch_size=1000,
+    max_items=None,
+    event_ticker=None,
+    series_ticker=None,
+    min_created_ts=None,
+    max_created_ts=None,
+    min_updated_ts=None,
+    max_close_ts=None,
+    min_close_ts=None,
+    min_settled_ts=None,
+    max_settled_ts=None,
+    tickers=None,
+    mve_filter=None,
+):
+    db_fd, db_path = tempfile.mkstemp(prefix="mykalshi-market-snapshot-", suffix=".sqlite3")
+    os.close(db_fd)
+    connection = sqlite3.connect(db_path)
+    connection.execute("CREATE TABLE market_rows (ticker TEXT PRIMARY KEY, payload TEXT NOT NULL)")
+
+    fieldnames: list[str] = []
+    raw_count = 0
+
+    try:
+        for markets in _iter_market_pages(
+            status=status,
+            batch_size=batch_size,
+            max_items=max_items,
+            event_ticker=event_ticker,
+            series_ticker=series_ticker,
+            min_created_ts=min_created_ts,
+            max_created_ts=max_created_ts,
+            min_updated_ts=min_updated_ts,
+            max_close_ts=max_close_ts,
+            min_close_ts=min_close_ts,
+            min_settled_ts=min_settled_ts,
+            max_settled_ts=max_settled_ts,
+            tickers=tickers,
+            mve_filter=mve_filter,
+        ):
+            rows = _normalize_market_rows(markets)
+            fieldnames = _merged_snapshot_fieldnames(fieldnames, rows)
+            payloads = []
+            for row in rows:
+                ticker = row.get("ticker")
+                if ticker is None:
+                    continue
+                raw_count += 1
+                payloads.append((str(ticker), json.dumps(row, separators=(",", ":"), ensure_ascii=False)))
+
+            if payloads:
+                connection.executemany(
+                    "INSERT OR REPLACE INTO market_rows (ticker, payload) VALUES (?, ?)",
+                    payloads,
+                )
+                connection.commit()
+
+        unique_count = int(connection.execute("SELECT COUNT(*) FROM market_rows").fetchone()[0])
+        return {
+            "db_path": db_path,
+            "fieldnames": fieldnames,
+            "raw_count": raw_count,
+            "unique_count": unique_count,
+        }
+    except Exception:
+        connection.close()
+        try:
+            os.remove(db_path)
+        except OSError:
+            pass
+        raise
+    finally:
+        connection.close()
+
+
+def _write_staged_market_snapshot(snapshot_file, staged_rows):
+    connection = sqlite3.connect(staged_rows["db_path"])
+    try:
+        fieldnames = list(staged_rows["fieldnames"])
+        with snapshot_file.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            for payload, in connection.execute("SELECT payload FROM market_rows ORDER BY ticker"):
+                row = json.loads(payload)
+                writer.writerow({column: row.get(column) for column in fieldnames})
+    finally:
+        connection.close()
+
+
+def _stream_merge_market_snapshot(snapshot_file, staged_rows):
+    connection = sqlite3.connect(staged_rows["db_path"])
+
+    try:
+        with snapshot_file.open("r", encoding="utf-8", newline="") as source:
+            reader = csv.DictReader(source)
+            if reader.fieldnames is None or "ticker" not in reader.fieldnames:
+                raise ValueError("Market snapshot sync requires a 'ticker' column in the snapshot CSV")
+
+            fieldnames = _merged_snapshot_fieldnames(reader.fieldnames, extra_keys=staged_rows["fieldnames"])
+            temp_path = snapshot_file.with_suffix(snapshot_file.suffix + ".tmp")
+            market_count = 0
+            with temp_path.open("w", encoding="utf-8", newline="") as destination:
+                writer = csv.DictWriter(destination, fieldnames=fieldnames)
+                writer.writeheader()
+
+                for row in reader:
+                    ticker = str(row.get("ticker") or "")
+                    payload = connection.execute(
+                        "SELECT payload FROM market_rows WHERE ticker = ?",
+                        (ticker,),
+                    ).fetchone()
+                    if payload is not None:
+                        merged = dict(row)
+                        merged.update(json.loads(payload[0]))
+                        writer.writerow({column: merged.get(column) for column in fieldnames})
+                        connection.execute("DELETE FROM market_rows WHERE ticker = ?", (ticker,))
+                    else:
+                        writer.writerow({column: row.get(column) for column in fieldnames})
+                    market_count += 1
+
+                for payload, in connection.execute("SELECT payload FROM market_rows ORDER BY ticker"):
+                    row = json.loads(payload)
+                    writer.writerow({column: row.get(column) for column in fieldnames})
+                    market_count += 1
+
+            connection.commit()
+        os.replace(temp_path, snapshot_file)
+        return market_count
+    finally:
+        connection.close()
+
+
 def sync_market_snapshot_csv(
     snapshot_path,
     *,
@@ -179,11 +408,6 @@ def sync_market_snapshot_csv(
     batch_size=1000,
     max_items=None,
 ):
-    try:
-        import pandas as pd
-    except ImportError as exc:
-        raise ImportError("pandas is required for sync_market_snapshot_csv") from exc
-
     snapshot_file = Path(snapshot_path)
     if not snapshot_file.is_absolute():
         snapshot_file = Path.cwd() / snapshot_file
@@ -198,26 +422,32 @@ def sync_market_snapshot_csv(
     refresh_started_at = _snapshot_timestamp_now()
 
     if not snapshot_exists:
-        markets = get_all_markets(status=status, batch_size=batch_size, max_items=max_items)
-        frame = pd.json_normalize(markets)
-        frame.to_csv(snapshot_file, index=False)
-        anchor_payload = {
-            "snapshot_path": str(snapshot_file),
-            "status": status,
-            "mode": "full_refresh",
-            "snapshot_created_at": refresh_started_at.isoformat(),
-            "snapshot_cursor_ts": int(refresh_started_at.timestamp()),
-            "market_count": int(len(frame)),
-        }
-        _write_snapshot_anchor(anchor_file, anchor_payload)
-        return {
-            "snapshot_path": snapshot_file,
-            "anchor_path": anchor_file,
-            "mode": "full_refresh",
-            "market_count": int(len(frame)),
-            "delta_count": int(len(frame)),
-            "anchor": anchor_payload,
-        }
+        staged_rows = _stage_market_rows(status=status, batch_size=batch_size, max_items=max_items)
+        try:
+            _write_staged_market_snapshot(snapshot_file, staged_rows)
+            market_count = int(staged_rows["unique_count"])
+            anchor_payload = {
+                "snapshot_path": str(snapshot_file),
+                "status": status,
+                "mode": "full_refresh",
+                "snapshot_created_at": refresh_started_at.isoformat(),
+                "snapshot_cursor_ts": int(refresh_started_at.timestamp()),
+                "market_count": market_count,
+            }
+            _write_snapshot_anchor(anchor_file, anchor_payload)
+            return {
+                "snapshot_path": snapshot_file,
+                "anchor_path": anchor_file,
+                "mode": "full_refresh",
+                "market_count": market_count,
+                "delta_count": market_count,
+                "anchor": anchor_payload,
+            }
+        finally:
+            try:
+                os.remove(staged_rows["db_path"])
+            except OSError:
+                pass
 
     anchor_payload = _read_snapshot_anchor(anchor_file)
     if anchor_payload is not None:
@@ -227,31 +457,22 @@ def sync_market_snapshot_csv(
         anchor_dt = _snapshot_timestamp_from_name(snapshot_file)
         mode = "incremental_refresh_bootstrap_anchor"
 
-    existing_frame = pd.read_csv(snapshot_file, low_memory=False)
-    delta_markets = get_all_markets(
+    staged_rows = _stage_market_rows(
         status=status,
         batch_size=batch_size,
         max_items=max_items,
         min_updated_ts=int(anchor_dt.timestamp()),
     )
-
-    if delta_markets:
-        delta_frame = pd.json_normalize(delta_markets)
-        if "ticker" not in existing_frame.columns or "ticker" not in delta_frame.columns:
-            raise ValueError("Market snapshot sync requires a 'ticker' column in both snapshot and delta data")
-        existing_frame = existing_frame.drop_duplicates(subset=["ticker"], keep="last")
-        delta_frame = delta_frame.drop_duplicates(subset=["ticker"], keep="last")
-        existing_frame = existing_frame.set_index("ticker", drop=False)
-        delta_frame = delta_frame.set_index("ticker", drop=False)
-        merged = pd.concat(
-            [existing_frame.loc[~existing_frame.index.isin(delta_frame.index)], delta_frame],
-            axis=0,
-        )
-        merged = merged.sort_index()
-        merged.to_csv(snapshot_file, index=False)
-        market_count = int(len(merged))
-    else:
-        market_count = int(len(existing_frame))
+    try:
+        if staged_rows["unique_count"]:
+            market_count = _stream_merge_market_snapshot(snapshot_file, staged_rows)
+        else:
+            market_count = int(anchor_payload.get("market_count")) if anchor_payload else _count_snapshot_rows(snapshot_file)
+    finally:
+        try:
+            os.remove(staged_rows["db_path"])
+        except OSError:
+            pass
 
     new_anchor = {
         "snapshot_path": str(snapshot_file),
@@ -267,7 +488,7 @@ def sync_market_snapshot_csv(
         "anchor_path": anchor_file,
         "mode": mode,
         "market_count": market_count,
-        "delta_count": int(len(delta_markets)),
+        "delta_count": int(staged_rows["unique_count"]),
         "anchor": new_anchor,
     }
 

@@ -48,12 +48,19 @@ class MarketSnapshotSyncTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             snapshot_path = Path(temp_dir) / "all_markets_2026-03-18-10-00-00.csv"
 
-            with patch(
-                "mykalshi.market.get_all_markets",
-                return_value=[
-                    {"ticker": "TICKER-1", "status": "open", "yes_bid": 45},
-                    {"ticker": "TICKER-2", "status": "open", "yes_bid": 55},
-                ],
+            def fake_get_markets(**kwargs):
+                self.assertEqual(kwargs["limit"], 1000)
+                self.assertIsNone(kwargs["cursor"])
+                return {
+                    "markets": [
+                        {"ticker": "TICKER-1", "status": "open", "yes_bid": 45},
+                        {"ticker": "TICKER-2", "status": "open", "yes_bid": 55},
+                    ],
+                    "cursor": None,
+                }
+
+            with patch("mykalshi.market.get_markets", side_effect=fake_get_markets), patch(
+                "mykalshi.market._normalize_market_rows", side_effect=lambda rows: rows
             ):
                 result = market.sync_market_snapshot_csv(snapshot_path)
 
@@ -88,13 +95,20 @@ class MarketSnapshotSyncTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with patch(
-                "mykalshi.market.get_all_markets",
-                return_value=[
-                    {"ticker": "TICKER-2", "status": "open", "yes_bid": 25},
-                    {"ticker": "TICKER-3", "status": "closed", "yes_bid": 30},
-                ],
-            ) as mocked_get_all_markets:
+            def fake_get_markets(**kwargs):
+                self.assertEqual(kwargs["cursor"], None)
+                self.assertEqual(kwargs["min_updated_ts"], int(datetime(2026, 3, 18, 10, 0, tzinfo=timezone.utc).timestamp()))
+                return {
+                    "markets": [
+                        {"ticker": "TICKER-2", "status": "open", "yes_bid": 25},
+                        {"ticker": "TICKER-3", "status": "closed", "yes_bid": 30},
+                    ],
+                    "cursor": None,
+                }
+
+            with patch("mykalshi.market.get_markets", side_effect=fake_get_markets), patch(
+                "mykalshi.market._normalize_market_rows", side_effect=lambda rows: rows
+            ):
                 result = market.sync_market_snapshot_csv(snapshot_path)
 
             self.assertEqual(result["mode"], "incremental_refresh")
@@ -103,20 +117,22 @@ class MarketSnapshotSyncTests(unittest.TestCase):
             self.assertEqual(frame["ticker"].tolist(), ["TICKER-1", "TICKER-2", "TICKER-3"])
             self.assertEqual(frame.loc[frame["ticker"] == "TICKER-2", "yes_bid"].iloc[0], 25)
             self.assertEqual(frame.loc[frame["ticker"] == "TICKER-3", "status"].iloc[0], "closed")
-            self.assertEqual(mocked_get_all_markets.call_args.kwargs["min_updated_ts"], int(datetime(2026, 3, 18, 10, 0, tzinfo=timezone.utc).timestamp()))
 
     def test_sync_market_snapshot_csv_bootstraps_anchor_from_filename(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             snapshot_path = Path(temp_dir) / "all_markets_2026-03-17-09-30-00.csv"
             pd.DataFrame([{"ticker": "TICKER-1", "status": "open", "yes_bid": 10}]).to_csv(snapshot_path, index=False)
 
-            with patch("mykalshi.market.get_all_markets", return_value=[]) as mocked_get_all_markets:
+            def fake_get_markets(**kwargs):
+                self.assertEqual(kwargs["min_updated_ts"], int(datetime(2026, 3, 17, 9, 30, 0, tzinfo=timezone.utc).timestamp()))
+                return {"markets": [], "cursor": None}
+
+            with patch("mykalshi.market.get_markets", side_effect=fake_get_markets):
                 result = market.sync_market_snapshot_csv(snapshot_path)
 
             self.assertEqual(result["mode"], "incremental_refresh_bootstrap_anchor")
             self.assertEqual(result["delta_count"], 0)
             self.assertTrue(result["anchor_path"].exists())
-            self.assertEqual(mocked_get_all_markets.call_args.kwargs["min_updated_ts"], int(datetime(2026, 3, 17, 9, 30, 0, tzinfo=timezone.utc).timestamp()))
 
 
 if __name__ == "__main__":

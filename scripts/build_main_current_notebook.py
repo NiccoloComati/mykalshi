@@ -134,6 +134,48 @@ set_cell(
         return PROJECT_ROOT / f"all_markets_{datetime.now(timezone.utc).strftime('%Y-%m-%d-%H-%M-%S')}.csv"
 
     MARKET_HISTORY_CACHE = {}
+    MARKET_SNAPSHOT_COLUMNS = {
+        "ticker",
+        "event_ticker",
+        "market_type",
+        "title",
+        "subtitle",
+        "yes_sub_title",
+        "no_sub_title",
+        "open_time",
+        "close_time",
+        "status",
+        "last_price",
+        "yes_bid",
+        "yes_ask",
+        "no_bid",
+        "no_ask",
+        "volume",
+        "volume_24h",
+        "open_interest",
+        "liquidity",
+        "last_price_dollars",
+        "yes_bid_dollars",
+        "yes_ask_dollars",
+        "no_bid_dollars",
+        "no_ask_dollars",
+        "volume_fp",
+        "volume_24h_fp",
+        "open_interest_fp",
+        "liquidity_dollars",
+    }
+    MARKET_SNAPSHOT_DTYPES = {
+        "ticker": "string",
+        "event_ticker": "string",
+        "market_type": "category",
+        "title": "string",
+        "subtitle": "string",
+        "yes_sub_title": "string",
+        "no_sub_title": "string",
+        "open_time": "string",
+        "close_time": "string",
+        "status": "category",
+    }
 
     def retry_on_429(label: str, func, *, max_retries: int = 4, base_backoff_seconds: float = 1.0):
         for attempt in range(1, max_retries + 1):
@@ -178,7 +220,13 @@ set_cell(
         )
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=pd.errors.DtypeWarning)
-            return normalize_market_frame(pd.read_csv(snapshot_path, low_memory=False))
+            frame = pd.read_csv(
+                snapshot_path,
+                low_memory=False,
+                usecols=lambda column: column in MARKET_SNAPSHOT_COLUMNS,
+                dtype=MARKET_SNAPSHOT_DTYPES,
+            )
+        return normalize_market_frame(frame)
 
     def load_open_markets(limit: int = 300) -> pd.DataFrame:
         payload = pd.json_normalize(market.get_all_markets(status="open", batch_size=100, max_items=limit))
