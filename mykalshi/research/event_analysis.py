@@ -98,6 +98,44 @@ def _resolve_live_series_ticker(ticker: str) -> str:
     return str(series_ticker)
 
 
+def load_event_market_payload(
+    event_ticker: str,
+    *,
+    series_ticker: str | None = None,
+    search_limit: int = 25,
+) -> dict[str, Any]:
+    """Load an event plus nested markets, with a series-scoped fallback.
+
+    Kalshi's direct `/events/{event_ticker}` path occasionally returns the event
+    payload with an empty `markets` list even when the series-scoped `/events`
+    listing still includes nested markets. This helper centralizes the fallback
+    so event-level research flows do not have to special-case that behavior.
+    """
+
+    response = events.get_event(event_ticker, with_nested_markets=True)
+    event_item = dict(response.get("event", response))
+    markets = list(response.get("markets") or event_item.get("markets") or [])
+    resolved_series_ticker = series_ticker or event_item.get("series_ticker")
+    if markets or not resolved_series_ticker:
+        return {"event": event_item, "markets": markets}
+
+    series_response = events.get_events(
+        series_ticker=str(resolved_series_ticker),
+        limit=search_limit,
+        with_nested_markets=True,
+    )
+    for candidate in series_response.get("events", []):
+        if candidate.get("event_ticker") != event_ticker:
+            continue
+        candidate_event = dict(candidate)
+        candidate_markets = list(candidate_event.pop("markets", []) or [])
+        merged_event = dict(event_item)
+        merged_event.update(candidate_event)
+        return {"event": merged_event, "markets": candidate_markets}
+
+    return {"event": event_item, "markets": markets}
+
+
 @dataclass(frozen=True)
 class MarketHistory:
     ticker: str
@@ -270,9 +308,9 @@ def build_event_closeup(
     market_limit: int | None = None,
     forward_fill_on_volume_threshold: float | None = 200.0,
 ) -> EventCloseup:
-    event_payload = events.get_event(event_ticker, with_nested_markets=True)
-    event_item = dict(event_payload.get("event", event_payload))
-    raw_markets = list(event_payload.get("markets") or event_item.get("markets") or [])
+    event_payload = load_event_market_payload(event_ticker)
+    event_item = dict(event_payload.get("event", {}))
+    raw_markets = list(event_payload.get("markets") or [])
     if not raw_markets:
         raw_markets = historical.get_all_historical_markets(event_ticker=event_ticker)
     markets_frame = _normalize_event_markets(raw_markets)

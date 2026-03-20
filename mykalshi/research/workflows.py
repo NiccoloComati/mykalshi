@@ -18,7 +18,7 @@ from .datasets import (
     market_data_events_to_dataframe,
     orderbook_events_to_dataframe,
 )
-from .event_analysis import EventCloseup, MarketHistory, build_event_closeup, load_market_history
+from .event_analysis import EventCloseup, MarketHistory, build_event_closeup, load_event_market_payload, load_market_history
 from .family_analysis import MarketFamilyAnalysis, build_market_family_analysis
 from .engine import BacktestRunResult, KalshiStrategy
 from .orderbook_analysis import OrderbookSnapshot, get_orderbook_snapshot
@@ -31,6 +31,7 @@ from .storage import (
     SQLiteOrderbookSink,
     SplitMarketCaptureSink,
 )
+from .trade_analysis import TradeHistory, load_trade_history
 from .universe import MarketUniverseSnapshot, UniverseSpec, open_market_universe, sync_market_universe
 from .websocket import KalshiWebsocketClient
 
@@ -490,11 +491,17 @@ class ResearchSession:
     def load_market_history(self, ticker: str, **kwargs: Any) -> MarketHistory:
         return load_market_history(ticker, **kwargs)
 
+    def load_event_market_payload(self, event_ticker: str, **kwargs: Any) -> dict[str, Any]:
+        return load_event_market_payload(event_ticker, **kwargs)
+
     def build_event_closeup(self, event_ticker: str, **kwargs: Any) -> EventCloseup:
         return build_event_closeup(event_ticker, **kwargs)
 
     def build_market_family_analysis(self, series_ticker: str, **kwargs: Any) -> MarketFamilyAnalysis:
         return build_market_family_analysis(series_ticker, **kwargs)
+
+    def load_trade_history(self, ticker: str, **kwargs: Any) -> TradeHistory:
+        return load_trade_history(ticker, **kwargs)
 
     def get_orderbook_snapshot(self, ticker: str, **kwargs: Any) -> OrderbookSnapshot:
         return get_orderbook_snapshot(ticker, **kwargs)

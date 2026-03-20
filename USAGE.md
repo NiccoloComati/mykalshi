@@ -569,6 +569,24 @@ print(result["sources_used"])
 print(result["total_count"])
 ```
 
+If you want a dataframe plus plotting/summarization helpers on top of that:
+
+```python
+from mykalshi.research import load_trade_history, plot_trade_activity, summarize_trade_history
+
+history = load_trade_history("KXELONMARS-99")
+print(summarize_trade_history(history))
+fig, axes = plot_trade_activity(history, freq="1D")
+```
+
+There is also a concrete multi-category road test built on the same analysis layer:
+
+```bash
+python scripts/analyze_oscars_dynamics.py
+```
+
+That writes a report and plots under `docs/analysis/oscars-2026-road-test/`.
+
 ## 12. Trading
 
 Trading/account calls live under `mykalshi.trading`.

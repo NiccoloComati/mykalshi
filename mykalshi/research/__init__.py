@@ -28,6 +28,7 @@ from .event_analysis import (
     MarketHistory,
     build_event_closeup,
     build_market_comparison_panel,
+    load_event_market_payload,
     load_market_history,
     plot_event_closeup,
 )
@@ -40,6 +41,13 @@ from .orderbook_analysis import (
     plot_orderbook_depth,
     plot_orderbook_matrix_snapshot,
     render_orderbook_text,
+)
+from .trade_analysis import (
+    TradeHistory,
+    load_trade_history,
+    plot_trade_activity,
+    resample_trade_history,
+    summarize_trade_history,
 )
 from .engine import (
     BacktestRunResult,
@@ -136,6 +144,7 @@ __all__ = [
     "SubscriptionRequest",
     "StrategyContext",
     "ThresholdSignalStrategy",
+    "TradeHistory",
     "TradeBacktester",
     "TradeSignal",
     "UniverseSpec",
@@ -148,7 +157,9 @@ __all__ = [
     "enrich_replay_events_with_market_lifecycle",
     "get_orderbook_snapshot",
     "load_market_data_events",
+    "load_event_market_payload",
     "load_market_history",
+    "load_trade_history",
     "load_historical_trades",
     "load_orderbook_events",
     "load_replay_event_stream",
@@ -164,10 +175,13 @@ __all__ = [
     "plot_market_family_comparison",
     "plot_orderbook_depth",
     "plot_orderbook_matrix_snapshot",
+    "plot_trade_activity",
     "replay_orderbook_events",
     "render_orderbook_text",
+    "resample_trade_history",
     "resolve_market_universe",
     "resolve_replay_market_metadata",
+    "summarize_trade_history",
     "sync_market_universe",
     "target_flat",
     "target_no",

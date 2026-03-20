@@ -284,6 +284,24 @@ trades = routing.get_trades_auto("KXELONMARS-99")
 print(trades["sources_used"])
 ```
 
+If you want a research-oriented dataframe and plotting layer on top of that, use the trade-analysis helpers:
+
+```python
+from mykalshi.research import load_trade_history, plot_trade_activity, summarize_trade_history
+
+history = load_trade_history("KXELONMARS-99")
+print(summarize_trade_history(history))
+fig, axes = plot_trade_activity(history, freq="1D")
+```
+
+There is also a concrete road-test script for a recent multi-category market family:
+
+```bash
+python scripts/analyze_oscars_dynamics.py
+```
+
+That script writes a full report plus plots under `docs/analysis/oscars-2026-road-test/`.
+
 Simple historical-trade backtests can now run without notebook CSV glue:
 
 ```python

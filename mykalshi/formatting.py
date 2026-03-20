@@ -4,11 +4,17 @@ from datetime import datetime
 
 
 def parse_timestamp(ts):
-    """Convert MM/DD/YYYY [HH:MM[:SS]] or Unix-like values to integer seconds."""
+    """Convert common timestamp formats or Unix-like values to integer seconds."""
     if isinstance(ts, str):
+        normalized = ts.strip()
+        iso_candidate = normalized.replace("Z", "+00:00")
+        try:
+            return int(datetime.fromisoformat(iso_candidate).timestamp())
+        except ValueError:
+            pass
         for fmt in ("%m/%d/%Y %H:%M:%S", "%m/%d/%Y %H:%M", "%m/%d/%Y"):
             try:
-                return int(datetime.strptime(ts, fmt).timestamp())
+                return int(datetime.strptime(normalized, fmt).timestamp())
             except ValueError:
                 continue
         raise ValueError(f"Invalid timestamp format: {ts}")
