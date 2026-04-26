@@ -139,6 +139,7 @@ The foundation layer has been exercised in the local `.venv` on 2026-03-15.
   - filtered market-universe snapshot sync + reload
   - `ResearchSession` wrappers over the new analysis layer
 - live Oscars road-test generation passed through `scripts/analyze_oscars_dynamics.py`, producing a report plus plots under `docs/analysis/oscars-2026-road-test/`
+- added `scripts/build_spy_like_markets_notebook.py` plus `notebooks/spy_like_markets.ipynb` for focused SPY-like / broad equity-index market discovery, market-type classification, and distribution-ready data pulls
 
 ## Safety Note
 
@@ -149,6 +150,7 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 1. Add richer market-family and settlement metadata handling where replayed datasets span related contracts.
 2. Extend the trading workflow layer with more advanced execution controls on top of the current safety rails.
 3. Keep tightening the CLI and examples around end-to-end research sessions now that capture, replay, and replay-backtest share one session format.
+4. Consider promoting the SPY-like notebook filtering heuristics into a reusable typed universe helper if that workflow becomes recurring.
 
 ## Recent Usability Notes
 
@@ -220,6 +222,7 @@ The root `.env` currently resolves to the production Kalshi environment. Read-on
 - the climate/weather cells now reuse a shared `429` retry helper and a clean city-extraction helper.
 - the guarded IMDB appendix now returns the parsed rating distribution correctly when `beautifulsoup4` is installed.
 - `scripts/analyze_oscars_dynamics.py` is now a concrete road-test generator for the current research stack, using recurring-series event selection, event closeups, trade analysis, and live orderbook inspection to produce a reusable multi-category report instead of another one-off notebook.
+- `scripts/build_spy_like_markets_notebook.py` now generates a dedicated notebook for broad equity-index value markets, using current discovery plus market/trade/history/orderbook pulls, explicit market-archetype classification, and exported terminal/max/min distribution tables under `data/spy_like_market_pull/`.
 - the CLI strategy loader accepts Python import paths like `module.submodule:ClassName` or `module.submodule:function_name`.
 - trading mutation commands in the CLI default to dry-run planning and require `--execute` for live writes.
 
